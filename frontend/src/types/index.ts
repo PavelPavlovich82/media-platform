@@ -80,6 +80,10 @@ export interface Upload {
   processingAttempts: number;
   lastError?: string;
 
+  // n8n / Creatomate result
+  renderUrl?: string;       // Creatomate download URL
+  triggeredN8n?: boolean;   // whether n8n was triggered for this batch
+
   // Timestamps
   createdAt: string;
   updatedAt: string;

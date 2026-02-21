@@ -97,18 +97,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setState((prev) => ({ ...prev, isLoading: true }));
 
       // Register the user
-      await authService.register(credentials);
+      const response = await authService.register(credentials);
 
-      // Auto-login after registration
-      await login({
-        email: credentials.email,
-        password: credentials.password,
+      // Auto-login: save token and set state
+      const { token, user, expiresAt } = response;
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('auth_token_expires', expiresAt);
+      localStorage.setItem('user', JSON.stringify(user));
+
+      setState({
+        user,
+        token,
+        isAuthenticated: true,
+        isLoading: false,
       });
     } catch (error: any) {
       setState((prev) => ({ ...prev, isLoading: false }));
       throw error;
     }
-  }, [login]);
+  }, []);
 
   /**
    * Logout user

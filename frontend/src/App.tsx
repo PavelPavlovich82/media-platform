@@ -12,6 +12,7 @@ import { ProtectedRoute } from './components/common/ProtectedRoute';
 import { Home } from './pages/Home';
 import { Dashboard } from './pages/Dashboard';
 import { Upload } from './pages/Upload';
+import { AdminPanel } from './pages/AdminPanel';
 
 // Auth components
 import { LoginForm } from './components/auth/LoginForm';
@@ -37,7 +38,7 @@ function App() {
             }
           />
 
-          {/* Upload routes */}
+          {/* Upload - unified form with photos, videos, text+voice */}
           <Route
             path="/upload"
             element={
@@ -47,40 +48,12 @@ function App() {
             }
           />
 
+          {/* Admin panel */}
           <Route
-            path="/upload/text"
+            path="/admin"
             element={
               <ProtectedRoute>
-                <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                  <div className="card max-w-md text-center">
-                    <h2 className="text-2xl font-bold mb-4">Текстовый ввод</h2>
-                    <p className="text-gray-600 mb-4">
-                      Эта страница будет реализована в Фазе 4
-                    </p>
-                    <a href="/dashboard" className="btn-primary">
-                      Вернуться в кабинет
-                    </a>
-                  </div>
-                </div>
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/upload/voice"
-            element={
-              <ProtectedRoute>
-                <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                  <div className="card max-w-md text-center">
-                    <h2 className="text-2xl font-bold mb-4">Голосовой ввод</h2>
-                    <p className="text-gray-600 mb-4">
-                      Эта страница будет реализована в Фазе 4
-                    </p>
-                    <a href="/dashboard" className="btn-primary">
-                      Вернуться в кабинет
-                    </a>
-                  </div>
-                </div>
+                <AdminPanel />
               </ProtectedRoute>
             }
           />

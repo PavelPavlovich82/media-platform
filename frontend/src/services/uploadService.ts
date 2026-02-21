@@ -1,32 +1,70 @@
 /**
  * Upload Service
  *
- * Handles communication with n8n backend for managing uploads.
+ * Local storage for uploads (will switch to n8n API later).
+ * Stores uploads in localStorage for demo/development.
  */
 
-import { api } from './authService';
 import type {
   Upload,
   CreateUploadParams,
-  ProcessingResult,
-  UserDecision,
+  ProcessingStatus,
   PaginatedResponse,
 } from '../types';
 
-/**
- * Upload Service API
- */
+const STORAGE_KEY = 'uploads';
+
+// ============================================================================
+// Local storage helpers
+// ============================================================================
+
+const getUploads = (): Upload[] => {
+  const data = localStorage.getItem(STORAGE_KEY);
+  if (!data) return [];
+  try {
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+};
+
+const saveUploads = (uploads: Upload[]): void => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(uploads));
+};
+
+// ============================================================================
+// Upload Service
+// ============================================================================
+
 export const uploadService = {
   /**
-   * Create new upload record and trigger n8n processing
+   * Create new upload record
    */
   async createUpload(params: CreateUploadParams): Promise<Upload> {
-    try {
-      const response = await api.post<{ success: boolean; upload: Upload }>('/uploads', params);
-      return response.data.upload;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to create upload');
-    }
+    const uploads = getUploads();
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
+
+    const upload: Upload = {
+      id: crypto.randomUUID(),
+      userId: user?.id || 'unknown',
+      contentType: params.contentType,
+      status: 'pending' as ProcessingStatus,
+      cloudinaryPublicId: params.cloudinaryPublicId,
+      cloudinaryUrl: params.cloudinaryUrl,
+      cloudinarySecureUrl: params.cloudinarySecureUrl,
+      textContent: params.textContent,
+      originalFilename: params.originalFilename,
+      fileSize: params.fileSize,
+      mimeType: params.mimeType,
+      processingAttempts: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    uploads.unshift(upload); // newest first
+    saveUploads(uploads);
+    return upload;
   },
 
   /**
@@ -37,76 +75,118 @@ export const uploadService = {
     limit?: number;
     offset?: number;
   }): Promise<PaginatedResponse<Upload>> {
-    try {
-      const params = new URLSearchParams();
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
 
-      if (options?.status) params.append('status', options.status);
-      if (options?.limit) params.append('limit', options.limit.toString());
-      if (options?.offset) params.append('offset', options.offset.toString());
+    let uploads = getUploads().filter((u) => u.userId === user?.id);
 
-      const response = await api.get<PaginatedResponse<Upload>>(`/uploads?${params.toString()}`);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch uploads');
+    if (options?.status) {
+      uploads = uploads.filter((u) => u.status === options.status);
     }
+
+    const total = uploads.length;
+    const offset = options?.offset || 0;
+    const limit = options?.limit || 50;
+    const sliced = uploads.slice(offset, offset + limit);
+
+    return {
+      success: true,
+      data: sliced,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+      },
+    };
   },
 
   /**
    * Get single upload by ID
    */
   async getUpload(uploadId: string): Promise<Upload> {
-    try {
-      const response = await api.get<Upload>(`/uploads/${uploadId}`);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch upload');
-    }
-  },
-
-  /**
-   * Get processing results for upload
-   */
-  async getProcessingResults(uploadId: string): Promise<ProcessingResult[]> {
-    try {
-      const response = await api.get<{ success: boolean; results: ProcessingResult[] }>(
-        `/uploads/${uploadId}/results`
-      );
-      return response.data.results;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch results');
-    }
+    const uploads = getUploads();
+    const upload = uploads.find((u) => u.id === uploadId);
+    if (!upload) throw new Error('Upload not found');
+    return upload;
   },
 
   /**
    * Submit user decision (approve/reject/retry)
    */
-  async submitDecision(uploadId: string, decision: UserDecision['decision']): Promise<Upload> {
-    try {
-      const response = await api.post<{ success: boolean; upload: Upload }>(
-        `/uploads/${uploadId}/decision`,
-        { decision }
-      );
-      return response.data.upload;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to submit decision');
-    }
+  async submitDecision(
+    uploadId: string,
+    decision: 'approve' | 'reject' | 'retry'
+  ): Promise<Upload> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) throw new Error('Upload not found');
+
+    const statusMap: Record<string, ProcessingStatus> = {
+      approve: 'approved',
+      reject: 'rejected',
+      retry: 'processing',
+    };
+
+    uploads[index] = {
+      ...uploads[index],
+      status: statusMap[decision],
+      updatedAt: new Date().toISOString(),
+      processingAttempts:
+        decision === 'retry'
+          ? uploads[index].processingAttempts + 1
+          : uploads[index].processingAttempts,
+    };
+
+    saveUploads(uploads);
+    return uploads[index];
   },
 
   /**
-   * Delete upload (if allowed)
+   * Delete upload
    */
   async deleteUpload(uploadId: string): Promise<void> {
-    try {
-      await api.delete(`/uploads/${uploadId}`);
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to delete upload');
-    }
+    const uploads = getUploads().filter((u) => u.id !== uploadId);
+    saveUploads(uploads);
+  },
+
+  /**
+   * Update upload with render URL from Creatomate (called after n8n callback)
+   */
+  async setRenderResult(uploadId: string, renderUrl: string): Promise<void> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) return;
+    uploads[index] = {
+      ...uploads[index],
+      renderUrl,
+      status: 'awaiting_decision',
+      updatedAt: new Date().toISOString(),
+    };
+    saveUploads(uploads);
+  },
+
+  /**
+   * Mark upload as n8n triggered
+   */
+  async markN8nTriggered(uploadId: string): Promise<void> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) return;
+    uploads[index] = {
+      ...uploads[index],
+      triggeredN8n: true,
+      status: 'processing',
+      updatedAt: new Date().toISOString(),
+    };
+    saveUploads(uploads);
   },
 };
 
-/**
- * Helper: Get upload status label
- */
+// ============================================================================
+// Helpers
+// ============================================================================
+
 export const getUploadStatusLabel = (status: string): string => {
   const labels: Record<string, string> = {
     uploading: 'Загружается',
@@ -118,13 +198,9 @@ export const getUploadStatusLabel = (status: string): string => {
     completed: 'Завершено',
     failed: 'Ошибка',
   };
-
   return labels[status] || status;
 };
 
-/**
- * Helper: Get upload status color
- */
 export const getUploadStatusColor = (status: string): string => {
   const colors: Record<string, string> = {
     uploading: 'bg-blue-100 text-blue-800',
@@ -136,6 +212,25 @@ export const getUploadStatusColor = (status: string): string => {
     completed: 'bg-green-100 text-green-800',
     failed: 'bg-red-100 text-red-800',
   };
-
   return colors[status] || 'bg-gray-100 text-gray-800';
+};
+
+export const getContentTypeLabel = (type: string): string => {
+  const labels: Record<string, string> = {
+    photo: 'Фото',
+    video: 'Видео',
+    text: 'Текст',
+    voice: 'Голос',
+  };
+  return labels[type] || type;
+};
+
+export const getContentTypeIcon = (type: string): string => {
+  const icons: Record<string, string> = {
+    photo: 'camera',
+    video: 'video',
+    text: 'text',
+    voice: 'mic',
+  };
+  return icons[type] || 'file';
 };
