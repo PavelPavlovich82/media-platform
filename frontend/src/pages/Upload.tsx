@@ -48,9 +48,28 @@ const emptySlot = (): FileSlot => ({
 // Component
 // ============================================================================
 
+// Load registered users from localStorage for the name dropdown
+const getRegisteredNames = (): string[] => {
+  const base = ['Vasia'];
+  try {
+    const stored = localStorage.getItem('registered_users');
+    if (stored) {
+      const users: { email: string }[] = JSON.parse(stored);
+      const names = users.map((u) => u.email.split('@')[0]);
+      // Merge with base, deduplicate, keep Vasia first
+      return ['Vasia', ...names.filter((n) => n.toLowerCase() !== 'vasia')];
+    }
+  } catch {}
+  return base;
+};
+
 export const Upload: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+
+  // Selected name for n8n (TARGET_NAME filter)
+  const [targetName, setTargetName] = useState<string>('Vasia');
+  const [availableNames] = useState<string[]>(getRegisteredNames);
 
   // 5 photo slots
   const [photos, setPhotos] = useState<FileSlot[]>(
@@ -208,6 +227,10 @@ export const Upload: React.FC = () => {
     setSubmitError(null);
 
     try {
+      // Local arrays to collect Cloudinary results (avoids React state closure bug)
+      const uploadedPhotos: { url: string; name?: string }[] = [];
+      const uploadedVideos: { url: string; name?: string }[] = [];
+
       // Upload photos to Cloudinary
       for (let i = 0; i < photos.length; i++) {
         const slot = photos[i];
@@ -231,7 +254,9 @@ export const Upload: React.FC = () => {
             },
           });
 
-          // Save metadata to backend
+          // Collect URL immediately into local array
+          uploadedPhotos.push({ url: result.secure_url, name: slot.file.name });
+
           await uploadService.createUpload({
             contentType: 'photo',
             cloudinaryPublicId: result.public_id,
@@ -291,6 +316,9 @@ export const Upload: React.FC = () => {
             },
           });
 
+          // Collect URL immediately into local array
+          uploadedVideos.push({ url: result.secure_url, name: slot.file.name });
+
           await uploadService.createUpload({
             contentType: 'video',
             cloudinaryPublicId: result.public_id,
@@ -324,46 +352,59 @@ export const Upload: React.FC = () => {
         }
       }
 
-      // Submit text
+      // --- Execution 1: Photos ---
+      if (uploadedPhotos.length > 0) {
+        const photoBatch = await uploadService.createUpload({ contentType: 'photo' });
+        await uploadService.markN8nTriggered(photoBatch.id);
+        const r1 = await triggerN8nWorkflow({
+          uploadId: photoBatch.id,
+          userName: targetName,
+          userEmail: user?.email || '',
+          type: 'image',
+          photos: uploadedPhotos,
+          videos: [],
+          count_image: uploadedPhotos.length,
+          count_video: 0,
+        });
+        if (r1.renderUrl) await uploadService.setRenderResult(photoBatch.id, r1.renderUrl);
+      }
+
+      // --- Execution 2: Videos ---
+      if (uploadedVideos.length > 0) {
+        const videoBatch = await uploadService.createUpload({ contentType: 'video' });
+        await uploadService.markN8nTriggered(videoBatch.id);
+        const r2 = await triggerN8nWorkflow({
+          uploadId: videoBatch.id,
+          userName: targetName,
+          userEmail: user?.email || '',
+          type: 'video',
+          photos: [],
+          videos: uploadedVideos,
+          count_image: 0,
+          count_video: uploadedVideos.length,
+        });
+        if (r2.renderUrl) await uploadService.setRenderResult(videoBatch.id, r2.renderUrl);
+      }
+
+      // --- Execution 3: Text ---
       if (hasText) {
-        await uploadService.createUpload({
+        const textUpload = await uploadService.createUpload({
           contentType: 'text',
           textContent: text.trim(),
         });
-      }
-
-      // --- Trigger n8n workflow with all collected files ---
-      const uploadedPhotos = photos
-        .filter((s) => s.uploaded && s.cloudinarySecureUrl)
-        .map((s) => ({ url: s.cloudinarySecureUrl!, name: s.file?.name }));
-
-      const uploadedVideos = videos
-        .filter((s) => s.uploaded && s.cloudinarySecureUrl)
-        .map((s) => ({ url: s.cloudinarySecureUrl!, name: s.file?.name }));
-
-      if (uploadedPhotos.length > 0 || uploadedVideos.length > 0) {
-        // Create a batch upload record in localStorage
-        const batchUpload = await uploadService.createUpload({
-          contentType: 'photo', // representative type for the batch
-          textContent: text.trim() || undefined,
+        await uploadService.markN8nTriggered(textUpload.id);
+        const r3 = await triggerN8nWorkflow({
+          uploadId: textUpload.id,
+          userName: targetName,
+          userEmail: user?.email || '',
+          type: 'text',
+          photos: [],
+          videos: [],
+          text: text.trim(),
+          count_image: 0,
+          count_video: 0,
         });
-
-        try {
-          await triggerN8nWorkflow({
-            uploadId: batchUpload.id,
-            userName: user?.email?.split('@')[0] || 'user',
-            userEmail: user?.email || '',
-            photos: uploadedPhotos,
-            videos: uploadedVideos,
-            text: text.trim() || undefined,
-            count_image: uploadedPhotos.length,
-            count_video: uploadedVideos.length,
-          });
-          await uploadService.markN8nTriggered(batchUpload.id);
-        } catch (n8nErr: any) {
-          // n8n error is non-fatal — files already uploaded to Cloudinary
-          console.warn('n8n trigger warning:', n8nErr.message);
-        }
+        if (r3.renderUrl) await uploadService.setRenderResult(textUpload.id, r3.renderUrl);
       }
 
       setSubmitSuccess(true);
@@ -554,6 +595,42 @@ export const Upload: React.FC = () => {
             <p className="text-green-600 text-sm mt-1">Перенаправление в личный кабинет...</p>
           </div>
         )}
+
+        {/* Name selector — "от чьего имени" */}
+        <div className="mb-8 card border-l-4 border-primary-500">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-lg bg-primary-100 flex items-center justify-center flex-shrink-0">
+              <svg className="h-5 w-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                От чьего имени загружаются материалы
+              </label>
+              <p className="text-xs text-gray-500 mb-2">
+                Имя передаётся в n8n для фильтрации данных при генерации
+              </p>
+              <select
+                value={targetName}
+                onChange={(e) => setTargetName(e.target.value)}
+                disabled={submitting}
+                className="input py-2 pr-8 max-w-xs"
+              >
+                {availableNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-shrink-0 text-right">
+              <span className="inline-block px-3 py-1 bg-primary-100 text-primary-700 text-sm font-bold rounded-full">
+                {targetName}
+              </span>
+            </div>
+          </div>
+        </div>
 
         {/* Photos section */}
         <section className="mb-8">
