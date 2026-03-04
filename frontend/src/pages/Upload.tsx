@@ -227,11 +227,11 @@ export const Upload: React.FC = () => {
     setSubmitError(null);
 
     try {
-      // Local arrays to collect Cloudinary results (avoids React state closure bug)
-      const uploadedPhotos: { url: string; name?: string }[] = [];
-      const uploadedVideos: { url: string; name?: string }[] = [];
+      // ── 1. Upload all files to Cloudinary ──────────────────────────────────
+      const uploadedPhotos: { url: string; secureUrl?: string; name?: string }[] = [];
+      const uploadedVideos: { url: string; secureUrl?: string; name?: string }[] = [];
 
-      // Upload photos to Cloudinary
+      // Photos
       for (let i = 0; i < photos.length; i++) {
         const slot = photos[i];
         if (!slot.file || slot.uploaded) continue;
@@ -253,47 +253,23 @@ export const Upload: React.FC = () => {
               });
             },
           });
-
-          // Collect URL immediately into local array
-          uploadedPhotos.push({ url: result.secure_url, name: slot.file.name });
-
-          await uploadService.createUpload({
-            contentType: 'photo',
-            cloudinaryPublicId: result.public_id,
-            cloudinaryUrl: result.url,
-            cloudinarySecureUrl: result.secure_url,
-            originalFilename: slot.file.name,
-            fileSize: slot.file.size,
-            mimeType: slot.file.type,
-          });
-
+          uploadedPhotos.push({ url: result.url, secureUrl: result.secure_url, name: slot.file.name });
           setPhotos((prev) => {
             const updated = [...prev];
-            updated[i] = {
-              ...updated[i],
-              uploading: false,
-              uploaded: true,
-              progress: 100,
-              cloudinaryUrl: result.url,
-              cloudinaryPublicId: result.public_id,
-              cloudinarySecureUrl: result.secure_url,
-            };
+            updated[i] = { ...updated[i], uploading: false, uploaded: true, progress: 100,
+              cloudinaryUrl: result.url, cloudinaryPublicId: result.public_id, cloudinarySecureUrl: result.secure_url };
             return updated;
           });
         } catch (err: any) {
           setPhotos((prev) => {
             const updated = [...prev];
-            updated[i] = {
-              ...updated[i],
-              uploading: false,
-              error: err.message || 'Ошибка загрузки фото',
-            };
+            updated[i] = { ...updated[i], uploading: false, error: err.message || 'Ошибка загрузки фото' };
             return updated;
           });
         }
       }
 
-      // Upload videos to Cloudinary
+      // Videos
       for (let i = 0; i < videos.length; i++) {
         const slot = videos[i];
         if (!slot.file || slot.uploaded) continue;
@@ -315,86 +291,68 @@ export const Upload: React.FC = () => {
               });
             },
           });
-
-          // Collect URL immediately into local array
-          uploadedVideos.push({ url: result.secure_url, name: slot.file.name });
-
-          await uploadService.createUpload({
-            contentType: 'video',
-            cloudinaryPublicId: result.public_id,
-            cloudinaryUrl: result.url,
-            cloudinarySecureUrl: result.secure_url,
-            originalFilename: slot.file.name,
-            fileSize: slot.file.size,
-            mimeType: slot.file.type,
-          });
-
+          uploadedVideos.push({ url: result.url, secureUrl: result.secure_url, name: slot.file.name });
           setVideos((prev) => {
             const updated = [...prev];
-            updated[i] = {
-              ...updated[i],
-              uploading: false,
-              uploaded: true,
-              progress: 100,
-            };
+            updated[i] = { ...updated[i], uploading: false, uploaded: true, progress: 100 };
             return updated;
           });
         } catch (err: any) {
           setVideos((prev) => {
             const updated = [...prev];
-            updated[i] = {
-              ...updated[i],
-              uploading: false,
-              error: err.message || 'Ошибка загрузки видео',
-            };
+            updated[i] = { ...updated[i], uploading: false, error: err.message || 'Ошибка загрузки видео' };
             return updated;
           });
         }
       }
 
-      // --- Execution 1: Photos ---
-      if (uploadedPhotos.length > 0) {
-        const photoBatch = await uploadService.createUpload({ contentType: 'photo' });
-        await uploadService.markN8nTriggered(photoBatch.id);
-        const r1 = await triggerN8nWorkflow({
-          uploadId: photoBatch.id,
+      // ── 2. Create ONE session record ────────────────────────────────────────
+      const gotPhotos = uploadedPhotos.length > 0;
+      const gotVideos = uploadedVideos.length > 0;
+      const contentType = gotPhotos && gotVideos ? 'mixed' : gotPhotos ? 'photo' : gotVideos ? 'video' : 'text';
+
+      const session = await uploadService.createUpload({
+        contentType,
+        targetName,
+        textContent: hasText ? text.trim() : undefined,
+        uploadedPhotos: gotPhotos ? uploadedPhotos : undefined,
+        uploadedVideos: gotVideos ? uploadedVideos : undefined,
+      });
+
+      // ── 3. Trigger n8n — 3 parallel calls (photos / videos / text) ─────────
+      await uploadService.markN8nTriggered(session.id);
+
+      const n8nCalls: Promise<import('../services/n8nService').N8nTriggerResult>[] = [];
+
+      if (gotPhotos) {
+        n8nCalls.push(triggerN8nWorkflow({
+          uploadId: session.id,
           userName: targetName,
           userEmail: user?.email || '',
           type: 'image',
-          photos: uploadedPhotos,
+          photos: uploadedPhotos.map((p) => ({ url: p.secureUrl || p.url, name: p.name })),
           videos: [],
           count_image: uploadedPhotos.length,
           count_video: 0,
-        });
-        if (r1.renderUrl) await uploadService.setRenderResult(photoBatch.id, r1.renderUrl);
+        }));
       }
 
-      // --- Execution 2: Videos ---
-      if (uploadedVideos.length > 0) {
-        const videoBatch = await uploadService.createUpload({ contentType: 'video' });
-        await uploadService.markN8nTriggered(videoBatch.id);
-        const r2 = await triggerN8nWorkflow({
-          uploadId: videoBatch.id,
+      if (gotVideos) {
+        n8nCalls.push(triggerN8nWorkflow({
+          uploadId: session.id,
           userName: targetName,
           userEmail: user?.email || '',
           type: 'video',
           photos: [],
-          videos: uploadedVideos,
+          videos: uploadedVideos.map((v) => ({ url: v.secureUrl || v.url, name: v.name })),
           count_image: 0,
           count_video: uploadedVideos.length,
-        });
-        if (r2.renderUrl) await uploadService.setRenderResult(videoBatch.id, r2.renderUrl);
+        }));
       }
 
-      // --- Execution 3: Text ---
       if (hasText) {
-        const textUpload = await uploadService.createUpload({
-          contentType: 'text',
-          textContent: text.trim(),
-        });
-        await uploadService.markN8nTriggered(textUpload.id);
-        const r3 = await triggerN8nWorkflow({
-          uploadId: textUpload.id,
+        n8nCalls.push(triggerN8nWorkflow({
+          uploadId: session.id,
           userName: targetName,
           userEmail: user?.email || '',
           type: 'text',
@@ -403,9 +361,23 @@ export const Upload: React.FC = () => {
           text: text.trim(),
           count_image: 0,
           count_video: 0,
-        });
-        if (r3.renderUrl) await uploadService.setRenderResult(textUpload.id, r3.renderUrl);
+        }));
       }
+
+      // Fire n8n calls in background — navigate immediately, save URL when response arrives
+      const sessionId = session.id;
+      Promise.all(n8nCalls)
+        .then(async (results) => {
+          const withUrl = results.find((r) => r.renderUrl);
+          if (withUrl?.renderUrl) {
+            await uploadService.setRenderResult(
+              sessionId,
+              withUrl.renderUrl,
+              withUrl.renderStatus ?? 'rendering'
+            );
+          }
+        })
+        .catch((err) => console.error('[Upload] n8n background error:', err));
 
       setSubmitSuccess(true);
       setTimeout(() => navigate('/dashboard'), 1500);
@@ -424,7 +396,7 @@ export const Upload: React.FC = () => {
     type: 'photo' | 'video',
     index: number,
     slot: FileSlot,
-    refs: React.MutableRefObject<(HTMLInputElement | null)[]>
+    refs: React.RefObject<(HTMLInputElement | null)[]>
   ) => {
     const accept = type === 'photo' ? 'image/jpeg,image/png,image/gif,image/webp' : 'video/mp4,video/webm,video/quicktime';
     const label = type === 'photo' ? 'Фото' : 'Видео';

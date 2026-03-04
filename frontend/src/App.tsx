@@ -13,6 +13,7 @@ import { Home } from './pages/Home';
 import { Dashboard } from './pages/Dashboard';
 import { Upload } from './pages/Upload';
 import { AdminPanel } from './pages/AdminPanel';
+import { ReadyVideos } from './pages/ReadyVideos';
 
 // Auth components
 import { LoginForm } from './components/auth/LoginForm';
@@ -44,6 +45,16 @@ function App() {
             element={
               <ProtectedRoute>
                 <Upload />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Ready videos */}
+          <Route
+            path="/ready"
+            element={
+              <ProtectedRoute>
+                <ReadyVideos />
               </ProtectedRoute>
             }
           />

@@ -44,7 +44,7 @@ export interface AuthResponse {
 // Upload Types
 // ============================================================================
 
-export type ContentType = 'photo' | 'video' | 'text' | 'voice';
+export type ContentType = 'photo' | 'video' | 'text' | 'voice' | 'mixed';
 
 export type ProcessingStatus =
   | 'uploading'
@@ -80,9 +80,15 @@ export interface Upload {
   processingAttempts: number;
   lastError?: string;
 
+  // Batch session: arrays of uploaded files (new combined-session format)
+  uploadedPhotos?: { url: string; secureUrl?: string; name?: string }[];
+  uploadedVideos?: { url: string; secureUrl?: string; name?: string }[];
+
   // n8n / Creatomate result
-  renderUrl?: string;       // Creatomate download URL
-  triggeredN8n?: boolean;   // whether n8n was triggered for this batch
+  renderUrl?: string;                        // Creatomate download URL
+  renderStatus?: 'rendering' | 'ready';      // whether file is ready to play
+  triggeredN8n?: boolean;                    // whether n8n was triggered for this batch
+  targetName?: string;                       // target person name sent to n8n (for polling)
 
   // Timestamps
   createdAt: string;
@@ -112,6 +118,9 @@ export interface CreateUploadParams {
   originalFilename?: string;
   fileSize?: number;
   mimeType?: string;
+  targetName?: string;
+  uploadedPhotos?: { url: string; secureUrl?: string; name?: string }[];
+  uploadedVideos?: { url: string; secureUrl?: string; name?: string }[];
 }
 
 export interface UserDecision {

@@ -24,7 +24,8 @@ export const Dashboard: React.FC = () => {
       const result = await uploadService.getUserUploads(
         filter !== 'all' ? { status: filter } : undefined
       );
-      setUploads(result.data);
+      // Never show pending items in Dashboard — they belong to "Готовое" once processed
+      setUploads(result.data.filter((u) => u.status !== 'pending'));
     } catch (err) {
       console.error('Failed to load uploads:', err);
     } finally {
@@ -32,41 +33,71 @@ export const Dashboard: React.FC = () => {
     }
   }, [filter]);
 
-  // Poll n8n for render results of "processing" uploads
+  // Poll n8n for render results — only for uploads older than 3 min
   const pollN8nResults = useCallback(async (currentUploads: Upload[]) => {
+    const STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min → auto-fail
+    const MIN_DELAY_MS     =  3 * 60 * 1000; // 3 min  → don't poll before this
+    const now = Date.now();
+
     const processing = currentUploads.filter(
-      (u) => u.status === 'processing' && u.triggeredN8n
+      (u) => u.status === 'processing' && u.triggeredN8n && !u.renderUrl
     );
+
     for (const upload of processing) {
+      const age = now - new Date(upload.createdAt).getTime();
+
+      // Auto-fail after 30 min
+      if (age > STALE_TIMEOUT_MS) {
+        await uploadService.markFailed(upload.id, 'Нет ответа от обработчика (таймаут 30 мин)');
+        continue;
+      }
+
+      // Wait at least 3 minutes before first poll — n8n + Creatomate need time
+      if (age < MIN_DELAY_MS) continue;
+
       try {
-        const result = await getRenderResult(upload.id);
+        const uploadDate = upload.createdAt.split('T')[0];
+        const result = await getRenderResult(upload.id, upload.targetName, uploadDate);
         if (result.renderUrl) {
           await uploadService.setRenderResult(upload.id, result.renderUrl);
+          await loadUploads();
         }
       } catch {
         // silent
       }
     }
-  }, []);
+  }, [loadUploads]);
 
   useEffect(() => {
     loadUploads();
-    const interval = setInterval(async () => {
-      await loadUploads();
-      // also poll n8n
+
+    // UI refresh every 15 sec
+    const uiInterval = setInterval(loadUploads, 15000);
+
+    // n8n poll every 30 sec (starts after 3-min delay enforced inside pollN8nResults)
+    const pollInterval = setInterval(async () => {
       const result = await uploadService.getUserUploads();
       await pollN8nResults(result.data);
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [loadUploads, pollN8nResults]);
+    }, 30000);
 
-  const handleDecision = async (uploadId: string, decision: 'approve' | 'reject' | 'retry') => {
-    await uploadService.submitDecision(uploadId, decision);
-    await loadUploads();
-  };
+    return () => {
+      clearInterval(uiInterval);
+      clearInterval(pollInterval);
+    };
+  }, [loadUploads, pollN8nResults]);
 
   const handleDelete = async (uploadId: string) => {
     await uploadService.deleteUpload(uploadId);
+    await loadUploads();
+  };
+
+  const handleDeleteAll = async () => {
+    await uploadService.deleteAllUserUploads();
+    await loadUploads();
+  };
+
+  const handleRenderReady = async (uploadId: string) => {
+    await uploadService.setRenderReady(uploadId);
     await loadUploads();
   };
 
@@ -78,16 +109,13 @@ export const Dashboard: React.FC = () => {
   const stats = {
     total: uploads.length,
     pending: uploads.filter((u) => u.status === 'pending' || u.status === 'processing').length,
-    awaiting: uploads.filter((u) => u.status === 'awaiting_decision').length,
     completed: uploads.filter((u) => u.status === 'approved' || u.status === 'completed').length,
     rejected: uploads.filter((u) => u.status === 'rejected').length,
   };
 
   const filters = [
     { key: 'all', label: 'Все', count: stats.total },
-    { key: 'pending', label: 'В очереди' },
     { key: 'processing', label: 'В обработке' },
-    { key: 'awaiting_decision', label: 'Требуют решения', count: stats.awaiting },
     { key: 'approved', label: 'Одобрено' },
     { key: 'rejected', label: 'Отклонено' },
   ];
@@ -97,7 +125,15 @@ export const Dashboard: React.FC = () => {
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">Личный кабинет</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-bold text-gray-900">Личный кабинет</h1>
+            <Link
+              to="/ready"
+              className="px-3 py-1.5 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors"
+            >
+              Готовое
+            </Link>
+          </div>
 
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-600">{user?.email}</span>
@@ -116,6 +152,7 @@ export const Dashboard: React.FC = () => {
         </div>
       </header>
 
+
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Stats cards */}
@@ -127,10 +164,6 @@ export const Dashboard: React.FC = () => {
           <div className="card text-center">
             <p className="text-3xl font-bold text-yellow-600">{stats.pending}</p>
             <p className="text-sm text-gray-500">В обработке</p>
-          </div>
-          <div className="card text-center">
-            <p className="text-3xl font-bold text-orange-600">{stats.awaiting}</p>
-            <p className="text-sm text-gray-500">Ждут решения</p>
           </div>
           <div className="card text-center">
             <p className="text-3xl font-bold text-green-600">{stats.completed}</p>
@@ -151,8 +184,8 @@ export const Dashboard: React.FC = () => {
           </Link>
         </div>
 
-        {/* Filters */}
-        <div className="flex flex-wrap gap-2 mb-6">
+        {/* Filters + clear all */}
+        <div className="flex flex-wrap items-center gap-2 mb-6">
           {filters.map((f) => (
             <button
               key={f.key}
@@ -176,6 +209,18 @@ export const Dashboard: React.FC = () => {
               )}
             </button>
           ))}
+
+          {uploads.length > 0 && (
+            <button
+              onClick={handleDeleteAll}
+              className="ml-auto px-3 py-1.5 rounded-full text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 transition-colors flex items-center gap-1.5"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Очистить всё
+            </button>
+          )}
         </div>
 
         {/* Uploads list */}
@@ -205,8 +250,8 @@ export const Dashboard: React.FC = () => {
               <UploadCard
                 key={upload.id}
                 upload={upload}
-                onDecision={handleDecision}
                 onDelete={handleDelete}
+                onRenderReady={handleRenderReady}
               />
             ))}
           </div>

@@ -16,7 +16,7 @@ import { config } from '../config/env';
 // ============================================================================
 
 const CHAT_INPUT_TRIGGER = 'запустить цепочку';
-const REQUEST_TIMEOUT = 30000; // 30 seconds
+const REQUEST_TIMEOUT = 300000; // 5 minutes — video generation takes time
 
 // ============================================================================
 // Types
@@ -38,6 +38,7 @@ export interface N8nTriggerResult {
   success: boolean;
   renderUrl?: string;
   renderId?: string;
+  renderStatus?: 'rendering' | 'ready';
   message?: string;
   statusCode?: number;
 }
@@ -106,10 +107,72 @@ const validatePayload = (payload: N8nWebhookPayload): void => {
   }
 };
 
+/**
+ * Recursively search for a video URL anywhere in the response object.
+ * Checks common URL field names first, then digs deeper.
+ */
+const findVideoUrl = (obj: unknown, depth = 0): string | undefined => {
+  if (depth > 6 || !obj) return undefined;
+
+  // Direct string that looks like a video URL
+  if (typeof obj === 'string' && /^https?:\/\/.+\.(mp4|webm|mov|avi)/i.test(obj)) {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findVideoUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  if (typeof obj === 'object') {
+    const rec = obj as Record<string, unknown>;
+    // Priority fields
+    const priorityFields = ['url', 'renderUrl', 'render_url', 'outputUrl', 'output_url', 'videoUrl', 'video_url', 'downloadUrl', 'download_url'];
+    for (const field of priorityFields) {
+      const val = rec[field];
+      if (typeof val === 'string' && val.startsWith('http')) return val;
+    }
+    // Recurse into all other fields
+    for (const val of Object.values(rec)) {
+      const found = findVideoUrl(val, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return undefined;
+};
+
+/** Find Creatomate status anywhere in the response */
+const findCreatomateStatus = (obj: unknown, depth = 0): string | undefined => {
+  if (depth > 6 || !obj) return undefined;
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findCreatomateStatus(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (typeof obj === 'object') {
+    const rec = obj as Record<string, unknown>;
+    if (typeof rec['status'] === 'string') return rec['status'] as string;
+    for (const val of Object.values(rec)) {
+      const found = findCreatomateStatus(val, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+};
+
 const parseN8nResponse = (data: unknown): N8nTriggerResult => {
   if (!data) {
     return { success: true };
   }
+
+  // Log raw response to help debug format issues
+  console.log('[n8nService] Webhook response:', JSON.stringify(data));
 
   const renders: N8nResponse[] = Array.isArray(data) ? data : [data as N8nResponse];
   const firstRender = renders[0];
@@ -118,13 +181,25 @@ const parseN8nResponse = (data: unknown): N8nTriggerResult => {
     return { success: true };
   }
 
-  const renderUrl = firstRender.url || firstRender.renderUrl;
+  // Try standard fields first, then recursive search
+  const renderUrl =
+    (firstRender.url as string | undefined) ||
+    (firstRender.renderUrl as string | undefined) ||
+    findVideoUrl(data);
+
   const renderId = firstRender.id;
+
+  // Creatomate statuses: 'planned' | 'rendering' | 'succeeded' | 'failed'
+  const creatomateStatus =
+    (firstRender.status as string | undefined) || findCreatomateStatus(data);
+  const renderStatus: 'rendering' | 'ready' =
+    creatomateStatus === 'succeeded' ? 'ready' : 'rendering';
 
   return {
     success: true,
     renderUrl: renderUrl || undefined,
-    renderId: renderId || undefined,
+    renderId: renderId ? String(renderId) : undefined,
+    renderStatus,
   };
 };
 
@@ -235,27 +310,74 @@ export const triggerN8nWorkflow = async (
 };
 
 /**
- * Poll for render result (kept for backwards compatibility).
- * TODO: Implement actual polling logic or remove if not needed.
+ * Poll Google Sheets (sheet 6) via n8n GET webhook for a Creatomate render URL.
+ *
+ * n8n webhook should:
+ *   1. Read sheet 6 of "toothmaster" spreadsheet
+ *   2. Find row where name == userName AND date == date AND status == "ready"
+ *   3. Return { found: true, url: "...", rowIndex: N } or { found: false }
+ *   4. Update that row's status to "done"
+ *
+ * App calls this every 15s for uploads that are in "processing" state.
  */
 export const getRenderResult = async (
-  uploadId: string
+  uploadId: string,
+  targetName?: string,
+  uploadDate?: string
 ): Promise<N8nRenderResult> => {
-  console.warn(
-    '[n8nService] getRenderResult is not implemented yet. Returning default status.'
-  );
-  return { uploadId, status: 'processing' };
-};
+  const pollUrl = import.meta.env.VITE_N8N_POLL_URL as string | undefined;
 
-/**
- * Get all render results (kept for backwards compatibility).
- * TODO: Implement actual fetching logic or remove if not needed.
- */
-export const getAllRenderResults = async (): Promise<
-  Record<string, N8nRenderResult>
-> => {
-  console.warn(
-    '[n8nService] getAllRenderResults is not implemented yet. Returning empty object.'
-  );
-  return {};
+  if (!pollUrl) {
+    // Poll URL not configured yet — silently skip
+    return { uploadId, status: 'processing' };
+  }
+
+  if (!targetName) {
+    return { uploadId, status: 'processing' };
+  }
+
+  // Use provided date or today in YYYY-MM-DD
+  const date = uploadDate ?? new Date().toISOString().split('T')[0];
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(
+      `${pollUrl}?userName=${encodeURIComponent(targetName)}&date=${encodeURIComponent(date)}`,
+      { signal: controller.signal }
+    );
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.warn(`[n8nService] Poll webhook returned ${response.status}`);
+      return { uploadId, status: 'processing' };
+    }
+
+    const text = await response.text();
+    if (!text.trim()) return { uploadId, status: 'processing' };
+
+    let data: { found?: boolean; url?: string; status?: string };
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { uploadId, status: 'processing' };
+    }
+
+    // Accept both {found: true, url} and {url} (n8n returns row data directly)
+    const url = data.url;
+    if (url && url.startsWith('http')) {
+      return { uploadId, renderUrl: url, status: 'awaiting_decision' };
+    }
+
+    return { uploadId, status: 'processing' };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.warn('[n8nService] Poll request timed out');
+    } else {
+      console.warn('[n8nService] Poll error:', err);
+    }
+    return { uploadId, status: 'processing' };
+  }
 };

@@ -57,6 +57,9 @@ export const uploadService = {
       originalFilename: params.originalFilename,
       fileSize: params.fileSize,
       mimeType: params.mimeType,
+      targetName: params.targetName,
+      uploadedPhotos: params.uploadedPhotos,
+      uploadedVideos: params.uploadedVideos,
       processingAttempts: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -151,16 +154,63 @@ export const uploadService = {
   },
 
   /**
-   * Update upload with render URL from Creatomate (called after n8n callback)
+   * Delete all uploads for current user
    */
-  async setRenderResult(uploadId: string, renderUrl: string): Promise<void> {
+  async deleteAllUserUploads(): Promise<void> {
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
+    const uploads = getUploads().filter((u) => u.userId !== user?.id);
+    saveUploads(uploads);
+  },
+
+  /**
+   * Mark upload as failed (e.g. stale processing timeout)
+   */
+  async markFailed(uploadId: string, reason?: string): Promise<void> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) return;
+    uploads[index] = {
+      ...uploads[index],
+      status: 'failed',
+      lastError: reason || 'Timeout: no response from processing',
+      updatedAt: new Date().toISOString(),
+    };
+    saveUploads(uploads);
+  },
+
+  /**
+   * Update upload with render URL from Creatomate (called after n8n callback).
+   * renderStatus='rendering' means URL is saved but file is not ready yet.
+   */
+  async setRenderResult(
+    uploadId: string,
+    renderUrl: string,
+    renderStatus: 'rendering' | 'ready' = 'rendering'
+  ): Promise<void> {
     const uploads = getUploads();
     const index = uploads.findIndex((u) => u.id === uploadId);
     if (index === -1) return;
     uploads[index] = {
       ...uploads[index],
       renderUrl,
+      renderStatus,
       status: 'awaiting_decision',
+      updatedAt: new Date().toISOString(),
+    };
+    saveUploads(uploads);
+  },
+
+  /**
+   * Mark render as ready (file confirmed accessible at renderUrl)
+   */
+  async setRenderReady(uploadId: string): Promise<void> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) return;
+    uploads[index] = {
+      ...uploads[index],
+      renderStatus: 'ready',
       updatedAt: new Date().toISOString(),
     };
     saveUploads(uploads);
