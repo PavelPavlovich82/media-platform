@@ -1,0 +1,53 @@
+# ══════════════════════════════════════════════════════
+# .cursorignore — Media Platform
+# Положить в корень проекта (рядом с .cursorrules)
+# ══════════════════════════════════════════════════════
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+dist/
+build/
+.vite/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Lock files (огромные, бесполезны для AI)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE (Cursor сам свои файлы знает)
+.vscode/
+.idea/
+
+# Git
+.git/
+
+# Coverage
+coverage/
+
+# Misc binary
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.webm
+*.ico
+*.woff
+*.woff2
