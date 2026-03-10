@@ -33,10 +33,11 @@ export const Dashboard: React.FC = () => {
     }
   }, [filter]);
 
-  // Poll n8n for render results — only for uploads older than 3 min
+  // Poll n8n for render results — with 6-min start delay and max 10 checks
   const pollN8nResults = useCallback(async (currentUploads: Upload[]) => {
     const STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min → auto-fail
-    const MIN_DELAY_MS     =  3 * 60 * 1000; // 3 min  → don't poll before this
+    const MIN_DELAY_MS = 6 * 60 * 1000; // wait 6 min after first POST trigger
+    const MAX_POLL_ATTEMPTS = 10;
     const now = Date.now();
 
     const processing = currentUploads.filter(
@@ -44,7 +45,9 @@ export const Dashboard: React.FC = () => {
     );
 
     for (const upload of processing) {
-      const age = now - new Date(upload.createdAt).getTime();
+      const triggerTime = upload.n8nTriggeredAt ?? upload.createdAt;
+      const age = now - new Date(triggerTime).getTime();
+      const attempts = upload.n8nPollAttempts ?? 0;
 
       // Auto-fail after 30 min
       if (age > STALE_TIMEOUT_MS) {
@@ -55,7 +58,13 @@ export const Dashboard: React.FC = () => {
       // Wait at least 3 minutes before first poll — n8n + Creatomate need time
       if (age < MIN_DELAY_MS) continue;
 
+      if (attempts >= MAX_POLL_ATTEMPTS) {
+        await uploadService.markFailed(upload.id, '����� �� �������: ���������� 10 �������� webhook');
+        continue;
+      }
+
       try {
+        await uploadService.incrementN8nPollAttempt(upload.id);
         const uploadDate = upload.createdAt.split('T')[0];
         const result = await getRenderResult(upload.id, upload.targetName, uploadDate);
         if (result.renderUrl) {
@@ -74,7 +83,7 @@ export const Dashboard: React.FC = () => {
     // UI refresh every 15 sec
     const uiInterval = setInterval(loadUploads, 15000);
 
-    // n8n poll every 30 sec (starts after 3-min delay enforced inside pollN8nResults)
+    // n8n poll every 30 sec (6-min delay + max 10 checks enforced inside pollN8nResults)
     const pollInterval = setInterval(async () => {
       const result = await uploadService.getUserUploads();
       await pollN8nResults(result.data);
@@ -260,3 +269,4 @@ export const Dashboard: React.FC = () => {
     </div>
   );
 };
+

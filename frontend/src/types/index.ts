@@ -88,6 +88,8 @@ export interface Upload {
   renderUrl?: string;                        // Creatomate download URL
   renderStatus?: 'rendering' | 'ready';      // whether file is ready to play
   triggeredN8n?: boolean;                    // whether n8n was triggered for this batch
+  n8nTriggeredAt?: string;                   // timestamp of first n8n POST trigger
+  n8nPollAttempts?: number;                  // how many GET polls were already done
   targetName?: string;                       // target person name sent to n8n (for polling)
 
   // Timestamps
@@ -252,3 +254,4 @@ export type Nullable<T> = T | null;
 export type Optional<T> = T | undefined;
 
 export type AsyncFunction<T = void> = (...args: any[]) => Promise<T>;
+

@@ -226,10 +226,30 @@ export const uploadService = {
     uploads[index] = {
       ...uploads[index],
       triggeredN8n: true,
+      n8nTriggeredAt: new Date().toISOString(),
+      n8nPollAttempts: 0,
       status: 'processing',
       updatedAt: new Date().toISOString(),
     };
     saveUploads(uploads);
+  },
+
+  /**
+   * Increase GET polling attempts counter for n8n render lookup.
+   */
+  async incrementN8nPollAttempt(uploadId: string): Promise<number> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) return 0;
+
+    const nextAttempts = (uploads[index].n8nPollAttempts ?? 0) + 1;
+    uploads[index] = {
+      ...uploads[index],
+      n8nPollAttempts: nextAttempts,
+      updatedAt: new Date().toISOString(),
+    };
+    saveUploads(uploads);
+    return nextAttempts;
   },
 };
 
@@ -284,3 +304,4 @@ export const getContentTypeIcon = (type: string): string => {
   };
   return icons[type] || 'file';
 };
+

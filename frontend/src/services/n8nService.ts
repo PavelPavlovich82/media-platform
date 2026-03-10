@@ -16,7 +16,9 @@ import { config } from '../config/env';
 // ============================================================================
 
 const CHAT_INPUT_TRIGGER = 'запустить цепочку';
-const REQUEST_TIMEOUT = 300000; // 5 minutes — video generation takes time
+const REQUEST_TIMEOUT = 300000; // 5 minutes - video generation takes time
+const DEFAULT_POLL_WEBHOOK_URL =
+  'https://pavelbb1982.app.n8n.cloud/webhook/49662ca4-5d73-419d-9d50-c36f363eb467';
 
 // ============================================================================
 // Types
@@ -325,12 +327,9 @@ export const getRenderResult = async (
   targetName?: string,
   uploadDate?: string
 ): Promise<N8nRenderResult> => {
-  const pollUrl = import.meta.env.VITE_N8N_POLL_URL as string | undefined;
-
-  if (!pollUrl) {
-    // Poll URL not configured yet — silently skip
-    return { uploadId, status: 'processing' };
-  }
+  const pollUrl =
+    (import.meta.env.VITE_N8N_POLL_URL as string | undefined) ||
+    DEFAULT_POLL_WEBHOOK_URL;
 
   if (!targetName) {
     return { uploadId, status: 'processing' };
@@ -381,3 +380,4 @@ export const getRenderResult = async (
     return { uploadId, status: 'processing' };
   }
 };
+
