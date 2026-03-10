@@ -205,14 +205,6 @@ const parseN8nResponse = (data: unknown): N8nTriggerResult => {
   };
 };
 
-const createTimeoutPromise = (timeout: number): Promise<never> => {
-  return new Promise((_, reject) => {
-    setTimeout(() => {
-      reject(new Error(`Request timeout after ${timeout}ms`));
-    }, timeout);
-  });
-};
-
 // ============================================================================
 // Main Functions
 // ============================================================================

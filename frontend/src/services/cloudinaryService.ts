@@ -101,7 +101,7 @@ export const uploadToCloudinary = async ({
  * Delete file from Cloudinary
  * Note: This requires backend implementation as it needs API secret
  */
-export const deleteFromCloudinary = async (publicId: string): Promise<void> => {
+export const deleteFromCloudinary = async (_publicId: string): Promise<void> => {
   // This should be implemented on backend for security
   // Frontend cannot delete files directly as it requires API secret
   throw new Error('Delete functionality must be implemented on backend');

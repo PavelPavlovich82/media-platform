@@ -15,7 +15,7 @@ import {
 interface UploadCardProps {
   upload: Upload;
   onDelete: (uploadId: string) => Promise<void>;
-  onRenderReady: (uploadId: string) => Promise<void>;
+  onRenderReady?: (uploadId: string) => Promise<void>;
 }
 
 /** Try to load video metadata to confirm the file exists and is playable */
@@ -41,7 +41,9 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
     const ready = await probeVideoUrl(upload.renderUrl);
     if (ready) {
       setVideoReady(true);
-      await onRenderReady(upload.id);
+      if (onRenderReady) {
+        await onRenderReady(upload.id);
+      }
     }
   }, [upload.renderUrl, upload.id, videoReady, onRenderReady]);
 

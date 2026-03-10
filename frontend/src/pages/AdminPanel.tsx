@@ -108,6 +108,8 @@ export const AdminPanel: React.FC = () => {
     if (!selectedUser) return;
 
     const { photos, videos, text } = getN8nPayloadForUser();
+    const payloadType: 'image' | 'video' | 'text' =
+      videos.length > 0 ? 'video' : photos.length > 0 ? 'image' : 'text';
 
     if (photos.length === 0 && videos.length === 0) {
       setTriggerError('У пользователя нет загруженных фото или видео');
@@ -142,6 +144,7 @@ export const AdminPanel: React.FC = () => {
         text,
         count_image: photos.length,
         count_video: videos.length,
+        type: payloadType,
       });
 
       await uploadService.markN8nTriggered(batchUpload.id);
@@ -155,12 +158,6 @@ export const AdminPanel: React.FC = () => {
     } finally {
       setTriggering(false);
     }
-  };
-
-  const handleDecision = async (uploadId: string, decision: 'approve' | 'reject' | 'retry') => {
-    await uploadService.submitDecision(uploadId, decision);
-    setAllUploads(getAllUploads());
-    setUserUploads(getAllUploads().filter((u) => u.userId === selectedUserId));
   };
 
   const handleDelete = async (uploadId: string) => {
@@ -344,7 +341,6 @@ export const AdminPanel: React.FC = () => {
                     <UploadCard
                       key={upload.id}
                       upload={upload}
-                      onDecision={handleDecision}
                       onDelete={handleDelete}
                     />
                   ))}
@@ -372,7 +368,6 @@ export const AdminPanel: React.FC = () => {
                       )}
                       <UploadCard
                         upload={upload}
-                        onDecision={handleDecision}
                         onDelete={handleDelete}
                       />
                     </div>
