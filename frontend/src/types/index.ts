@@ -90,6 +90,7 @@ export interface Upload {
   triggeredN8n?: boolean;                    // whether n8n was triggered for this batch
   n8nTriggeredAt?: string;                   // timestamp of first n8n POST trigger
   n8nPollAttempts?: number;                  // how many GET polls were already done
+  publishWebhookTriggeredAt?: string;        // timestamp of POST to "video arrived on site" webhook
   targetName?: string;                       // target person name sent to n8n (for polling)
 
   // Timestamps

@@ -9,7 +9,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { uploadService } from '../services/uploadService';
-import { getRenderResult } from '../services/n8nService';
+import {
+  getRenderResult,
+  triggerVideoPublishedWebhook,
+} from '../services/n8nService';
 import { UploadCard } from '../components/dashboard/UploadCard';
 import type { Upload } from '../types';
 
@@ -69,13 +72,46 @@ export const Dashboard: React.FC = () => {
         const result = await getRenderResult(upload.id, upload.targetName, uploadDate);
         if (result.renderUrl) {
           await uploadService.setRenderResult(upload.id, result.renderUrl);
+
+          const publishOk = await triggerVideoPublishedWebhook({
+            uploadId: upload.id,
+            userName: upload.targetName,
+            userEmail: user?.email || '',
+            renderUrl: result.renderUrl,
+            createdAt: new Date().toISOString(),
+          });
+          if (publishOk) {
+            await uploadService.markPublishWebhookTriggered(upload.id);
+          }
           await loadUploads();
         }
       } catch {
         // silent
       }
     }
-  }, [loadUploads]);
+
+    // Retry send for already received links if webhook wasn't marked as sent before
+    const withRenderNoWebhook = currentUploads.filter(
+      (u) => !!u.renderUrl && !u.publishWebhookTriggeredAt
+    );
+
+    for (const upload of withRenderNoWebhook) {
+      try {
+        const publishOk = await triggerVideoPublishedWebhook({
+          uploadId: upload.id,
+          userName: upload.targetName,
+          userEmail: user?.email || '',
+          renderUrl: upload.renderUrl!,
+          createdAt: upload.updatedAt,
+        });
+        if (publishOk) {
+          await uploadService.markPublishWebhookTriggered(upload.id);
+        }
+      } catch {
+        // silent
+      }
+    }
+  }, [loadUploads, user?.email]);
 
   useEffect(() => {
     loadUploads();

@@ -19,6 +19,8 @@ const CHAT_INPUT_TRIGGER = 'запустить цепочку';
 const REQUEST_TIMEOUT = 300000; // 5 minutes - video generation takes time
 const DEFAULT_POLL_WEBHOOK_URL =
   'https://pavelbb1982.app.n8n.cloud/webhook/49662ca4-5d73-419d-9d50-c36f363eb467';
+const DEFAULT_PUBLISH_WEBHOOK_URL =
+  'https://pavelbb1982.app.n8n.cloud/webhook/be71a706-bb67-41ac-b3e2-0804c2e3957b';
 
 // ============================================================================
 // Types
@@ -49,6 +51,14 @@ export interface N8nRenderResult {
   uploadId: string;
   renderUrl?: string;
   status: 'processing' | 'awaiting_decision' | 'failed';
+}
+
+export interface N8nPublishPayload {
+  uploadId: string;
+  userName?: string;
+  userEmail?: string;
+  renderUrl: string;
+  createdAt?: string;
 }
 
 interface N8nResponse {
@@ -370,6 +380,52 @@ export const getRenderResult = async (
       console.warn('[n8nService] Poll error:', err);
     }
     return { uploadId, status: 'processing' };
+  }
+};
+
+/**
+ * Trigger webhook when rendered video URL appears on the site.
+ * This webhook is fire-and-forget: response body is ignored.
+ */
+export const triggerVideoPublishedWebhook = async (
+  payload: N8nPublishPayload
+): Promise<boolean> => {
+  if (!payload.uploadId || !payload.renderUrl) return false;
+
+  const publishUrl =
+    (import.meta.env.VITE_N8N_PUBLISH_WEBHOOK_URL as string | undefined) ||
+    DEFAULT_PUBLISH_WEBHOOK_URL;
+
+  try {
+    const response = await fetch(publishUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.api.n8nApiKey && {
+          'X-N8N-API-KEY': config.api.n8nApiKey,
+        }),
+      },
+      body: JSON.stringify({
+        event: 'video_link_arrived_on_site',
+        uploadId: payload.uploadId,
+        userName: payload.userName ?? '',
+        userEmail: payload.userEmail ?? '',
+        renderUrl: payload.renderUrl,
+        createdAt: payload.createdAt ?? new Date().toISOString(),
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(
+        `[n8nService] Publish webhook returned ${response.status} ${response.statusText}`
+      );
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('[n8nService] Publish webhook error:', err);
+    return false;
   }
 };
 

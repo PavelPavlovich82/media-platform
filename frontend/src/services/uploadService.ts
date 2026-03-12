@@ -251,6 +251,21 @@ export const uploadService = {
     saveUploads(uploads);
     return nextAttempts;
   },
+
+  /**
+   * Mark that "video link arrived on site" webhook was sent.
+   */
+  async markPublishWebhookTriggered(uploadId: string): Promise<void> {
+    const uploads = getUploads();
+    const index = uploads.findIndex((u) => u.id === uploadId);
+    if (index === -1) return;
+    uploads[index] = {
+      ...uploads[index],
+      publishWebhookTriggeredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    saveUploads(uploads);
+  },
 };
 
 // ============================================================================
