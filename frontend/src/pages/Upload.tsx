@@ -5,7 +5,7 @@
  * All fields are optional.
  */
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { uploadToCloudinary, validateFile, formatFileSize } from '../services/cloudinaryService';
 import {
@@ -47,6 +47,14 @@ const emptySlot = (): FileSlot => ({
   uploaded: false,
 });
 
+const ADMIN_EMAIL = 'admin@media.com';
+
+const getNameFromEmail = (email?: string): string => {
+  if (!email) return '';
+  const [name] = email.split('@');
+  return name || '';
+};
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -69,10 +77,15 @@ const getRegisteredNames = (): string[] => {
 export const Upload: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL;
+  const ownName = getNameFromEmail(user?.email);
 
   // Selected name for n8n (TARGET_NAME filter)
   const [targetName, setTargetName] = useState<string>('Vasia');
-  const [availableNames] = useState<string[]>(getRegisteredNames);
+  const availableNames = useMemo<string[]>(
+    () => (isAdmin ? getRegisteredNames() : ownName ? [ownName] : ['Vasia']),
+    [isAdmin, ownName]
+  );
 
   // 5 photo slots
   const [photos, setPhotos] = useState<FileSlot[]>(
@@ -115,6 +128,13 @@ export const Upload: React.FC = () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isRecording]);
+
+  // Keep selected targetName valid when user/role changes.
+  useEffect(() => {
+    if (!availableNames.includes(targetName)) {
+      setTargetName(availableNames[0] || 'Vasia');
+    }
+  }, [availableNames, targetName]);
 
   // ============================================================================
   // File handlers
@@ -226,6 +246,12 @@ export const Upload: React.FC = () => {
       return;
     }
 
+    const safeTargetName = (isAdmin ? targetName : ownName).trim();
+    if (!safeTargetName || !availableNames.includes(safeTargetName)) {
+      setSubmitError('РќРµРґРѕРїСѓСЃС‚РёРјС‹Р№ РїСЂРѕС„РёР»СЊ РґР»СЏ Р·Р°РіСЂСѓР·РєРё');
+      return;
+    }
+
     setSubmitting(true);
     setSubmitError(null);
 
@@ -316,7 +342,7 @@ export const Upload: React.FC = () => {
 
       const session = await uploadService.createUpload({
         contentType,
-        targetName,
+        targetName: safeTargetName,
         textContent: hasText ? text.trim() : undefined,
         uploadedPhotos: gotPhotos ? uploadedPhotos : undefined,
         uploadedVideos: gotVideos ? uploadedVideos : undefined,
@@ -330,7 +356,7 @@ export const Upload: React.FC = () => {
       if (gotPhotos) {
         n8nCalls.push(triggerN8nWorkflow({
           uploadId: session.id,
-          userName: targetName,
+          userName: safeTargetName,
           userEmail: user?.email || '',
           type: 'image',
           photos: uploadedPhotos.map((p) => ({ url: p.secureUrl || p.url, name: p.name })),
@@ -343,7 +369,7 @@ export const Upload: React.FC = () => {
       if (gotVideos) {
         n8nCalls.push(triggerN8nWorkflow({
           uploadId: session.id,
-          userName: targetName,
+          userName: safeTargetName,
           userEmail: user?.email || '',
           type: 'video',
           photos: [],
@@ -356,7 +382,7 @@ export const Upload: React.FC = () => {
       if (hasText) {
         n8nCalls.push(triggerN8nWorkflow({
           uploadId: session.id,
-          userName: targetName,
+          userName: safeTargetName,
           userEmail: user?.email || '',
           type: 'text',
           photos: [],
@@ -381,7 +407,7 @@ export const Upload: React.FC = () => {
 
             const publishOk = await triggerVideoPublishedWebhook({
               uploadId: sessionId,
-              userName: targetName,
+              userName: safeTargetName,
               userEmail: user?.email || '',
               renderUrl: withUrl.renderUrl,
               createdAt: new Date().toISOString(),
@@ -601,7 +627,7 @@ export const Upload: React.FC = () => {
               <select
                 value={targetName}
                 onChange={(e) => setTargetName(e.target.value)}
-                disabled={submitting}
+                disabled={submitting || !isAdmin}
                 className="input py-2 pr-8 max-w-xs"
               >
                 {availableNames.map((name) => (
