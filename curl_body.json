@@ -1,0 +1,1 @@
+{"ok":true,"queued":true,"message":"External API is temporarily unavailable. Payload queued for retry.","error":"Failed to send media to external API: cURL error 6: Could not resolve host: media.all-all.ru"}

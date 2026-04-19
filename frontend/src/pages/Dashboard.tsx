@@ -77,6 +77,10 @@ export const Dashboard: React.FC = () => {
             uploadId: upload.id,
             userName: upload.targetName,
             userEmail: user?.email || '',
+            serviceSlug: upload.serviceSlug,
+            teamSlug: upload.teamSlug,
+            serviceName: upload.serviceName,
+            teamName: upload.teamName,
             renderUrl: result.renderUrl,
             createdAt: new Date().toISOString(),
           });
@@ -101,6 +105,10 @@ export const Dashboard: React.FC = () => {
           uploadId: upload.id,
           userName: upload.targetName,
           userEmail: user?.email || '',
+          serviceSlug: upload.serviceSlug,
+          teamSlug: upload.teamSlug,
+          serviceName: upload.serviceName,
+          teamName: upload.teamName,
           renderUrl: upload.renderUrl!,
           createdAt: upload.updatedAt,
         });
@@ -217,15 +225,36 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* New upload button */}
-        <div className="mb-6">
+        <div className="hidden">
           <Link
-            to="/upload"
+            to="/upload?mode=video"
             className="btn-primary inline-flex items-center gap-2"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             Новая загрузка
+          </Link>
+        </div>
+
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <Link
+            to="/upload?mode=video"
+            className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-lg font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+          >
+            Видео
+          </Link>
+          <Link
+            to="/upload?mode=article"
+            className="inline-flex items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-lg font-semibold text-indigo-700 hover:bg-indigo-100 transition-colors"
+          >
+            Статьи
+          </Link>
+          <Link
+            to="/upload?mode=avatar"
+            className="inline-flex items-center justify-center rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-lg font-semibold text-cyan-700 hover:bg-cyan-100 transition-colors"
+          >
+            Аватар
           </Link>
         </div>
 
@@ -285,7 +314,7 @@ export const Dashboard: React.FC = () => {
             <p className="text-gray-600 mb-4">
               {filter === 'all' ? 'У вас пока нет загрузок' : 'Нет загрузок с таким статусом'}
             </p>
-            <Link to="/upload" className="btn-primary">
+            <Link to="/upload?mode=video" className="btn-primary">
               Загрузить первый файл
             </Link>
           </div>

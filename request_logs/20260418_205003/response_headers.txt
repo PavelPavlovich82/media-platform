@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+Date: Sat, 18 Apr 2026 17:50:03 GMT
+Server: Apache/2.4.65 (Debian)
+X-Powered-By: PHP/8.2.29
+X-Robots-Tag: noindex
+Link: <http://localhost:8080/wp-json/>; rel="https://api.w.org/"
+X-Content-Type-Options: nosniff
+Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link
+Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type
+Allow: POST
+Content-Length: 918
+Content-Type: application/json; charset=UTF-8
+

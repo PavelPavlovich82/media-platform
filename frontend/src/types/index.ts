@@ -44,7 +44,14 @@ export interface AuthResponse {
 // Upload Types
 // ============================================================================
 
-export type ContentType = 'photo' | 'video' | 'text' | 'voice' | 'mixed';
+export type ContentType =
+  | 'photo'
+  | 'video'
+  | 'text'
+  | 'voice'
+  | 'mixed'
+  | 'article'
+  | 'avatar';
 
 export type ProcessingStatus =
   | 'uploading'
@@ -92,6 +99,10 @@ export interface Upload {
   n8nPollAttempts?: number;                  // how many GET polls were already done
   publishWebhookTriggeredAt?: string;        // timestamp of POST to "video arrived on site" webhook
   targetName?: string;                       // target person name sent to n8n (for polling)
+  serviceSlug?: string;                      // parent WordPress category slug (service_slug)
+  teamSlug?: string;                         // child WordPress category slug (team_slug)
+  serviceName?: string;                      // parent WordPress category name
+  teamName?: string;                         // child WordPress category name
 
   // Timestamps
   createdAt: string;
@@ -122,6 +133,10 @@ export interface CreateUploadParams {
   fileSize?: number;
   mimeType?: string;
   targetName?: string;
+  serviceSlug?: string;
+  teamSlug?: string;
+  serviceName?: string;
+  teamName?: string;
   uploadedPhotos?: { url: string; secureUrl?: string; name?: string }[];
   uploadedVideos?: { url: string; secureUrl?: string; name?: string }[];
 }

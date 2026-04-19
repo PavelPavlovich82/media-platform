@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { uploadToCloudinary, validateFile, formatFileSize } from '../services/cloudinaryService';
 import {
   startRecording,
@@ -21,6 +21,7 @@ import {
 } from '../services/n8nService';
 import { config } from '../config/env';
 import { useAuth } from '../contexts/AuthContext';
+import { WP_SERVICE_CATEGORIES } from '../constants/wpCategories';
 
 // ============================================================================
 // Types
@@ -38,6 +39,8 @@ interface FileSlot {
   cloudinarySecureUrl?: string;
 }
 
+type FormMode = 'video' | 'article' | 'avatar';
+
 const emptySlot = (): FileSlot => ({
   file: null,
   preview: null,
@@ -47,44 +50,44 @@ const emptySlot = (): FileSlot => ({
   uploaded: false,
 });
 
-const ADMIN_EMAIL = 'admin@media.com';
-
-const getNameFromEmail = (email?: string): string => {
-  if (!email) return '';
-  const [name] = email.split('@');
-  return name || '';
-};
-
 // ============================================================================
 // Component
 // ============================================================================
 
-// Load registered users from localStorage for the name dropdown
-const getRegisteredNames = (): string[] => {
-  const base = ['Vasia'];
-  try {
-    const stored = localStorage.getItem('registered_users');
-    if (stored) {
-      const users: { email: string }[] = JSON.parse(stored);
-      const names = users.map((u) => u.email.split('@')[0]);
-      // Merge with base, deduplicate, keep Vasia first
-      return ['Vasia', ...names.filter((n) => n.toLowerCase() !== 'vasia')];
-    }
-  } catch {}
-  return base;
-};
-
 export const Upload: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL;
-  const ownName = getNameFromEmail(user?.email);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialMode = (searchParams.get('mode') || 'video') as FormMode;
+  const [formMode, setFormMode] = useState<FormMode>(
+    initialMode === 'article' || initialMode === 'avatar' ? initialMode : 'video'
+  );
 
-  // Selected name for n8n (TARGET_NAME filter)
-  const [targetName, setTargetName] = useState<string>('Vasia');
-  const availableNames = useMemo<string[]>(
-    () => (isAdmin ? getRegisteredNames() : ownName ? [ownName] : ['Vasia']),
-    [isAdmin, ownName]
+  const defaultService = WP_SERVICE_CATEGORIES[0];
+  const defaultTeam = defaultService?.teams[0];
+
+  const [selectedServiceSlug, setSelectedServiceSlug] = useState<string>(
+    defaultService?.slug || ''
+  );
+  const [selectedTeamSlug, setSelectedTeamSlug] = useState<string>(
+    defaultTeam?.slug || ''
+  );
+
+  const selectedService = useMemo(
+    () =>
+      WP_SERVICE_CATEGORIES.find(
+        (service) => service.slug === selectedServiceSlug
+      ) || WP_SERVICE_CATEGORIES[0],
+    [selectedServiceSlug]
+  );
+
+  const availableTeams = selectedService?.teams || [];
+
+  const selectedTeam = useMemo(
+    () =>
+      availableTeams.find((team) => team.slug === selectedTeamSlug) ||
+      availableTeams[0],
+    [availableTeams, selectedTeamSlug]
   );
 
   // 5 photo slots
@@ -129,12 +132,26 @@ export const Upload: React.FC = () => {
     };
   }, [isRecording]);
 
-  // Keep selected targetName valid when user/role changes.
+  // Keep selected team valid when parent category changes.
   useEffect(() => {
-    if (!availableNames.includes(targetName)) {
-      setTargetName(availableNames[0] || 'Vasia');
+    if (!availableTeams.some((team) => team.slug === selectedTeamSlug)) {
+      setSelectedTeamSlug(availableTeams[0]?.slug || '');
     }
-  }, [availableNames, targetName]);
+  }, [availableTeams, selectedTeamSlug]);
+
+  useEffect(() => {
+    const mode = searchParams.get('mode');
+    if (mode === 'video' || mode === 'article' || mode === 'avatar') {
+      setFormMode(mode);
+      return;
+    }
+    setSearchParams({ mode: 'video' }, { replace: true });
+    setFormMode('video');
+  }, [searchParams, setSearchParams]);
+
+  const modeTitle =
+    formMode === 'video' ? 'Видео' : formMode === 'article' ? 'Статьи' : 'Аватар';
+  const showVoiceInput = formMode === 'video';
 
   // ============================================================================
   // File handlers
@@ -246,9 +263,19 @@ export const Upload: React.FC = () => {
       return;
     }
 
-    const safeTargetName = (isAdmin ? targetName : ownName).trim();
-    if (!safeTargetName || !availableNames.includes(safeTargetName)) {
-      setSubmitError('РќРµРґРѕРїСѓСЃС‚РёРјС‹Р№ РїСЂРѕС„РёР»СЊ РґР»СЏ Р·Р°РіСЂСѓР·РєРё');
+      const safeServiceSlug = selectedService?.slug || '';
+      const safeTeamSlug = selectedTeam?.slug || '';
+      const safeTargetName = selectedTeam?.label || '';
+      const safeServiceName = selectedService?.label || '';
+      const safeTeamName = selectedTeam?.label || '';
+
+    if (!safeServiceSlug) {
+      setSubmitError('Выберите дисциплину');
+      return;
+    }
+
+    if (!safeTeamSlug || !safeTargetName) {
+      setSubmitError('Выберите, от чьего имени загружаются материалы');
       return;
     }
 
@@ -338,30 +365,48 @@ export const Upload: React.FC = () => {
       // ── 2. Create ONE session record ────────────────────────────────────────
       const gotPhotos = uploadedPhotos.length > 0;
       const gotVideos = uploadedVideos.length > 0;
-      const contentType = gotPhotos && gotVideos ? 'mixed' : gotPhotos ? 'photo' : gotVideos ? 'video' : 'text';
+      const contentType =
+        formMode === 'article'
+          ? 'article'
+          : formMode === 'avatar'
+          ? 'avatar'
+          : gotPhotos && gotVideos ? 'mixed' : gotPhotos ? 'photo' : gotVideos ? 'video' : 'text';
 
       const session = await uploadService.createUpload({
         contentType,
         targetName: safeTargetName,
+        serviceSlug: safeServiceSlug,
+        teamSlug: safeTeamSlug,
+        serviceName: safeServiceName,
+        teamName: safeTeamName,
         textContent: hasText ? text.trim() : undefined,
         uploadedPhotos: gotPhotos ? uploadedPhotos : undefined,
         uploadedVideos: gotVideos ? uploadedVideos : undefined,
       });
 
-      // ── 3. Trigger n8n — 3 parallel calls (photos / videos / text) ─────────
+      // ── 3. Trigger n8n — send photos/videos/text together in one request ──
       await uploadService.markN8nTriggered(session.id);
 
       const n8nCalls: Promise<import('../services/n8nService').N8nTriggerResult>[] = [];
+      const totalImageCount = uploadedPhotos.length;
+      const totalVideoCount = uploadedVideos.length;
+      const sharedText = hasText ? text.trim() : '';
+      const normalizedPhotos = uploadedPhotos.map((p) => ({ url: p.secureUrl || p.url, name: p.name }));
+      const normalizedVideos = uploadedVideos.map((v) => ({ url: v.secureUrl || v.url, name: v.name }));
 
       if (gotPhotos) {
         n8nCalls.push(triggerN8nWorkflow({
           uploadId: session.id,
           userName: safeTargetName,
           userEmail: user?.email || '',
+          serviceSlug: safeServiceSlug,
+          teamSlug: safeTeamSlug,
+          formType: formMode,
           type: 'image',
-          photos: uploadedPhotos.map((p) => ({ url: p.secureUrl || p.url, name: p.name })),
+          photos: normalizedPhotos,
           videos: [],
-          count_image: uploadedPhotos.length,
+          text: '',
+          count_image: totalImageCount,
           count_video: 0,
         }));
       }
@@ -371,11 +416,15 @@ export const Upload: React.FC = () => {
           uploadId: session.id,
           userName: safeTargetName,
           userEmail: user?.email || '',
+          serviceSlug: safeServiceSlug,
+          teamSlug: safeTeamSlug,
+          formType: formMode,
           type: 'video',
           photos: [],
-          videos: uploadedVideos.map((v) => ({ url: v.secureUrl || v.url, name: v.name })),
+          videos: normalizedVideos,
+          text: '',
           count_image: 0,
-          count_video: uploadedVideos.length,
+          count_video: totalVideoCount,
         }));
       }
 
@@ -384,10 +433,13 @@ export const Upload: React.FC = () => {
           uploadId: session.id,
           userName: safeTargetName,
           userEmail: user?.email || '',
+          serviceSlug: safeServiceSlug,
+          teamSlug: safeTeamSlug,
+          formType: formMode,
           type: 'text',
           photos: [],
           videos: [],
-          text: text.trim(),
+          text: sharedText,
           count_image: 0,
           count_video: 0,
         }));
@@ -409,6 +461,10 @@ export const Upload: React.FC = () => {
               uploadId: sessionId,
               userName: safeTargetName,
               userEmail: user?.email || '',
+              serviceSlug: safeServiceSlug,
+              teamSlug: safeTeamSlug,
+              serviceName: safeServiceName,
+              teamName: safeTeamName,
               renderUrl: withUrl.renderUrl,
               createdAt: new Date().toISOString(),
             });
@@ -590,7 +646,7 @@ export const Upload: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </Link>
-            <h1 className="text-2xl font-bold text-gray-900">Новая загрузка</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{modeTitle}</h1>
           </div>
           <div className="text-sm text-gray-600">{user?.email}</div>
         </div>
@@ -609,7 +665,49 @@ export const Upload: React.FC = () => {
           </div>
         )}
 
-        {/* Name selector — "от чьего имени" */}
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3 items-stretch">
+          <button
+            onClick={() => {
+              setFormMode('video');
+              setSearchParams({ mode: 'video' }, { replace: true });
+            }}
+            className={`h-16 rounded-xl border px-4 py-3 text-lg font-semibold leading-none flex items-center justify-center transition-colors ${
+              formMode === 'video'
+                ? 'border-blue-300 bg-blue-100 text-blue-700'
+                : 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100'
+            }`}
+          >
+            Видео
+          </button>
+          <button
+            onClick={() => {
+              setFormMode('article');
+              setSearchParams({ mode: 'article' }, { replace: true });
+            }}
+            className={`h-16 rounded-xl border px-4 py-3 text-lg font-semibold leading-none flex items-center justify-center transition-colors ${
+              formMode === 'article'
+                ? 'border-indigo-300 bg-indigo-100 text-indigo-700'
+                : 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+            }`}
+          >
+            Статьи
+          </button>
+          <button
+            onClick={() => {
+              setFormMode('avatar');
+              setSearchParams({ mode: 'avatar' }, { replace: true });
+            }}
+            className={`h-16 rounded-xl border px-4 py-3 text-lg font-semibold leading-none flex items-center justify-center transition-colors ${
+              formMode === 'avatar'
+                ? 'border-cyan-300 bg-cyan-100 text-cyan-700'
+                : 'border-cyan-200 bg-cyan-50 text-cyan-600 hover:bg-cyan-100'
+            }`}
+          >
+            Аватар
+          </button>
+        </div>
+
+        {/* Service/team selectors for WordPress categories */}
         <div className="mb-8 card border-l-4 border-primary-500">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-lg bg-primary-100 flex items-center justify-center flex-shrink-0">
@@ -617,29 +715,48 @@ export const Upload: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
             </div>
-            <div className="flex-1">
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
-                От чьего имени загружаются материалы
-              </label>
-              <p className="text-xs text-gray-500 mb-2">
-                Имя передаётся в n8n для фильтрации данных при генерации
-              </p>
-              <select
-                value={targetName}
-                onChange={(e) => setTargetName(e.target.value)}
-                disabled={submitting || !isAdmin}
-                className="input py-2 pr-8 max-w-xs"
-              >
-                {availableNames.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Дисциплина
+                </label>
+                <p className="text-xs text-gray-500 mb-2">slug: `service_slug`</p>
+                <select
+                  value={selectedServiceSlug}
+                  onChange={(e) => setSelectedServiceSlug(e.target.value)}
+                  disabled={submitting}
+                  className="input py-2 pr-8 w-full"
+                >
+                  {WP_SERVICE_CATEGORIES.map((service) => (
+                    <option key={service.slug} value={service.slug}>
+                      {service.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  От чьего имени
+                </label>
+                <p className="text-xs text-gray-500 mb-2">slug: `team_slug`</p>
+                <select
+                  value={selectedTeamSlug}
+                  onChange={(e) => setSelectedTeamSlug(e.target.value)}
+                  disabled={submitting || availableTeams.length === 0}
+                  className="input py-2 pr-8 w-full"
+                >
+                  {availableTeams.map((team) => (
+                    <option key={team.slug} value={team.slug}>
+                      {team.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex-shrink-0 text-right">
               <span className="inline-block px-3 py-1 bg-primary-100 text-primary-700 text-sm font-bold rounded-full">
-                {targetName}
+                {selectedTeam?.label || 'Не выбрано'}
               </span>
             </div>
           </div>
@@ -709,44 +826,50 @@ export const Upload: React.FC = () => {
                 setText(e.target.value);
                 setSubmitError(null);
               }}
-              placeholder="Введите текст или нажмите на микрофон для записи голоса..."
-              className="input min-h-[120px] resize-y pr-14"
+              placeholder={
+                showVoiceInput
+                  ? 'Введите текст или нажмите на микрофон для записи голоса...'
+                  : 'Введите текст для формы...'
+              }
+              className={`input min-h-[120px] resize-y ${showVoiceInput ? 'pr-14' : 'pr-4'}`}
               maxLength={10000}
-              disabled={submitting || isTranscribing}
+              disabled={submitting || (showVoiceInput && isTranscribing)}
             />
 
             {/* Voice button inside textarea */}
-            <button
-              onClick={handleToggleRecording}
-              disabled={submitting || isTranscribing}
-              className={`absolute right-3 top-3 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-                isRecording
-                  ? 'bg-red-500 text-white animate-pulse'
-                  : isTranscribing
-                  ? 'bg-purple-100 text-purple-500'
-                  : 'bg-gray-100 text-gray-500 hover:bg-primary-100 hover:text-primary-600'
-              } disabled:opacity-50`}
-              title={isRecording ? 'Остановить запись' : 'Записать голос'}
-            >
-              {isTranscribing ? (
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              ) : isRecording ? (
-                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-              ) : (
-                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-                  <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                </svg>
-              )}
-            </button>
+            {showVoiceInput && (
+              <button
+                onClick={handleToggleRecording}
+                disabled={submitting || isTranscribing}
+                className={`absolute right-3 top-3 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                  isRecording
+                    ? 'bg-red-500 text-white animate-pulse'
+                    : isTranscribing
+                    ? 'bg-purple-100 text-purple-500'
+                    : 'bg-gray-100 text-gray-500 hover:bg-primary-100 hover:text-primary-600'
+                } disabled:opacity-50`}
+                title={isRecording ? 'Остановить запись' : 'Записать голос'}
+              >
+                {isTranscribing ? (
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : isRecording ? (
+                  <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                ) : (
+                  <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                    <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+                  </svg>
+                )}
+              </button>
+            )}
 
             {/* Recording indicator */}
-            {isRecording && (
+            {showVoiceInput && isRecording && (
               <div className="absolute right-16 top-3 flex items-center gap-2 bg-red-50 rounded-full px-3 py-1.5">
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 <span className="text-xs text-red-600 font-medium">
@@ -755,7 +878,7 @@ export const Upload: React.FC = () => {
               </div>
             )}
 
-            {isTranscribing && (
+            {showVoiceInput && isTranscribing && (
               <div className="absolute right-16 top-3 flex items-center gap-2 bg-purple-50 rounded-full px-3 py-1.5">
                 <span className="text-xs text-purple-600 font-medium">Распознаю...</span>
               </div>
@@ -787,7 +910,7 @@ export const Upload: React.FC = () => {
           </Link>
           <button
             onClick={handleSubmit}
-            disabled={submitting || submitSuccess || isRecording}
+            disabled={submitting || submitSuccess || (showVoiceInput && isRecording)}
             className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px]"
           >
             {submitting ? (
@@ -799,7 +922,7 @@ export const Upload: React.FC = () => {
                 Отправка...
               </span>
             ) : (
-              'Отправить на обработку'
+              `Отправить форму "${modeTitle}"`
             )}
           </button>
         </div>
@@ -830,3 +953,4 @@ export const Upload: React.FC = () => {
     </div>
   );
 };
+

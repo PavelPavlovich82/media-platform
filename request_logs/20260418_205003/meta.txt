@@ -1,0 +1,10 @@
+﻿timestamp_start=2026-04-18T20:50:03.7138605+03:00
+timestamp_end=2026-04-18T20:50:15.3731835+03:00
+workdir=c:\Users\Павел\Desktop\Курсор обучение\введение
+endpoint=http://localhost:8080/wp-json/allall-media-bridge/v1/push-video
+curl_exit_code=0
+http_code=200
+payload_file=c:\Users\Павел\Desktop\Курсор обучение\введение\request_logs\\20260418_205003\payload.json
+headers_file=c:\Users\Павел\Desktop\Курсор обучение\введение\request_logs\\20260418_205003\response_headers.txt
+body_file=c:\Users\Павел\Desktop\Курсор обучение\введение\request_logs\\20260418_205003\response_body.json
+verbose_file=c:\Users\Павел\Desktop\Курсор обучение\введение\request_logs\\20260418_205003\curl_verbose.log
