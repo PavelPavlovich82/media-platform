@@ -74,11 +74,18 @@ export const uploadToCloudinary = async ({
         try {
           const response: CloudinaryUploadResponse = JSON.parse(xhr.responseText);
           resolve(response);
-        } catch (error) {
+        } catch {
           reject(new Error('Failed to parse Cloudinary response'));
         }
       } else {
-        reject(new Error(`Upload failed with status ${xhr.status}`));
+        let message = xhr.statusText || 'Unknown Cloudinary error';
+        try {
+          const parsed = JSON.parse(xhr.responseText) as { error?: { message?: string } };
+          message = parsed.error?.message || message;
+        } catch {
+          if (xhr.responseText) message = xhr.responseText.slice(0, 300);
+        }
+        reject(new Error(`Cloudinary upload failed (${xhr.status}): ${message}`));
       }
     });
 
@@ -101,7 +108,8 @@ export const uploadToCloudinary = async ({
  * Delete file from Cloudinary
  * Note: This requires backend implementation as it needs API secret
  */
-export const deleteFromCloudinary = async (_publicId: string): Promise<void> => {
+export const deleteFromCloudinary = async (publicId: string): Promise<void> => {
+  void publicId;
   // This should be implemented on backend for security
   // Frontend cannot delete files directly as it requires API secret
   throw new Error('Delete functionality must be implemented on backend');

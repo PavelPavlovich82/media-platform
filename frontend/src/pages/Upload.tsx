@@ -50,6 +50,9 @@ const emptySlot = (): FileSlot => ({
   uploaded: false,
 });
 
+const getErrorMessage = (err: unknown, fallback: string): string =>
+  err instanceof Error && err.message ? err.message : fallback;
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -232,8 +235,8 @@ export const Upload: React.FC = () => {
         if (transcribed.trim()) {
           setText((prev) => (prev ? prev + ' ' + transcribed : transcribed));
         }
-      } catch (err: any) {
-        setSubmitError(err.message || 'Ошибка распознавания речи');
+      } catch (err: unknown) {
+        setSubmitError(getErrorMessage(err, 'Ошибка распознавания речи'));
       } finally {
         setIsTranscribing(false);
       }
@@ -286,15 +289,25 @@ export const Upload: React.FC = () => {
       // ── 1. Upload all files to Cloudinary ──────────────────────────────────
       const uploadedPhotos: { url: string; secureUrl?: string; name?: string }[] = [];
       const uploadedVideos: { url: string; secureUrl?: string; name?: string }[] = [];
+      const uploadErrors: string[] = [];
 
       // Photos
       for (let i = 0; i < photos.length; i++) {
         const slot = photos[i];
-        if (!slot.file || slot.uploaded) continue;
+        if (!slot.file) continue;
+
+        if (slot.uploaded && slot.cloudinaryUrl) {
+          uploadedPhotos.push({
+            url: slot.cloudinaryUrl,
+            secureUrl: slot.cloudinarySecureUrl,
+            name: slot.file.name,
+          });
+          continue;
+        }
 
         setPhotos((prev) => {
           const updated = [...prev];
-          updated[i] = { ...updated[i], uploading: true, progress: 0 };
+          updated[i] = { ...updated[i], uploading: true, progress: 0, error: null };
           return updated;
         });
 
@@ -316,10 +329,12 @@ export const Upload: React.FC = () => {
               cloudinaryUrl: result.url, cloudinaryPublicId: result.public_id, cloudinarySecureUrl: result.secure_url };
             return updated;
           });
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const message = getErrorMessage(err, 'Photo upload failed');
+          uploadErrors.push(`Photo ${i + 1}: ${message}`);
           setPhotos((prev) => {
             const updated = [...prev];
-            updated[i] = { ...updated[i], uploading: false, error: err.message || 'Ошибка загрузки фото' };
+            updated[i] = { ...updated[i], uploading: false, error: message };
             return updated;
           });
         }
@@ -328,11 +343,20 @@ export const Upload: React.FC = () => {
       // Videos
       for (let i = 0; i < videos.length; i++) {
         const slot = videos[i];
-        if (!slot.file || slot.uploaded) continue;
+        if (!slot.file) continue;
+
+        if (slot.uploaded && slot.cloudinaryUrl) {
+          uploadedVideos.push({
+            url: slot.cloudinaryUrl,
+            secureUrl: slot.cloudinarySecureUrl,
+            name: slot.file.name,
+          });
+          continue;
+        }
 
         setVideos((prev) => {
           const updated = [...prev];
-          updated[i] = { ...updated[i], uploading: true, progress: 0 };
+          updated[i] = { ...updated[i], uploading: true, progress: 0, error: null };
           return updated;
         });
 
@@ -350,19 +374,30 @@ export const Upload: React.FC = () => {
           uploadedVideos.push({ url: result.url, secureUrl: result.secure_url, name: slot.file.name });
           setVideos((prev) => {
             const updated = [...prev];
-            updated[i] = { ...updated[i], uploading: false, uploaded: true, progress: 100 };
+            updated[i] = { ...updated[i], uploading: false, uploaded: true, progress: 100,
+              cloudinaryUrl: result.url, cloudinaryPublicId: result.public_id, cloudinarySecureUrl: result.secure_url };
             return updated;
           });
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const message = getErrorMessage(err, 'Video upload failed');
+          uploadErrors.push(`Video ${i + 1}: ${message}`);
           setVideos((prev) => {
             const updated = [...prev];
-            updated[i] = { ...updated[i], uploading: false, error: err.message || 'Ошибка загрузки видео' };
+            updated[i] = { ...updated[i], uploading: false, error: message };
             return updated;
           });
         }
       }
 
       // ── 2. Create ONE session record ────────────────────────────────────────
+      if (uploadErrors.length > 0) {
+        throw new Error(uploadErrors.join('\n'));
+      }
+
+      if ((hasPhotos || hasVideos) && uploadedPhotos.length + uploadedVideos.length === 0) {
+        throw new Error('Selected files were not uploaded. Please try again.');
+      }
+
       const gotPhotos = uploadedPhotos.length > 0;
       const gotVideos = uploadedVideos.length > 0;
       const contentType =
@@ -478,8 +513,8 @@ export const Upload: React.FC = () => {
 
       setSubmitSuccess(true);
       setTimeout(() => navigate('/dashboard'), 1500);
-    } catch (err: any) {
-      setSubmitError(err.message || 'Ошибка при отправке');
+    } catch (err: unknown) {
+      setSubmitError(getErrorMessage(err, 'Ошибка при отправке'));
     } finally {
       setSubmitting(false);
     }

@@ -442,184 +442,148 @@ export const getRenderResult = async (
  * Trigger webhook when rendered video URL appears on the site.
  * This webhook is fire-and-forget: response body is ignored.
  */
-export const triggerVideoPublishedWebhook = async (
-  payload: N8nPublishPayload
-): Promise<boolean> => {
-  if (!payload.uploadId || !payload.renderUrl) return false;
+const DIRECT_MP4_URL_REGEX = /^https?:\/\/.+\.mp4(?:[?#].*)?$/i;
 
-  const localSitePublishUrl =
-    (import.meta.env.VITE_LOCAL_SITE_PUBLISH_URL as string | undefined)?.trim() || '';
-  const localSitePublishToken =
-    (import.meta.env.VITE_LOCAL_SITE_PUBLISH_TOKEN as string | undefined)?.trim() || '';
-  const publishUrl =
-    localSitePublishUrl ||
-    (import.meta.env.VITE_N8N_PUBLISH_WEBHOOK_URL as string | undefined) ||
-    DEFAULT_PUBLISH_WEBHOOK_URL;
+interface VideoIngestRequest {
+  endpoint: string;
+  uploadId: string;
+  serviceSlug: string;
+  teamSlug: string;
+  videoUrl: string;
+}
 
-  const isLocalBridge = Boolean(localSitePublishUrl) && publishUrl === localSitePublishUrl;
-  const requestBody = isLocalBridge
-    ? {
-        // Required fields for WP plugin allall-media-bridge ingest endpoint
-        service_slug: payload.serviceSlug ?? '',
-        team_slug: payload.teamSlug ?? '',
-        type: 'video',
-        video_url: payload.renderUrl,
-        // Optional metadata fields accepted by plugin
-        title:
-          [payload.serviceName, payload.teamName].filter(Boolean).join(' / ') ||
-          [payload.serviceSlug, payload.teamSlug].filter(Boolean).join(' / ') ||
-          undefined,
-        description: payload.uploadId,
-        published_at: payload.createdAt ?? new Date().toISOString(),
-      }
-    : {
-        event: 'video_link_arrived_on_site',
-        source: 'creatomate',
-        uploadId: payload.uploadId,
-        userName: payload.userName ?? '',
-        userEmail: payload.userEmail ?? '',
-        service_slug: payload.serviceSlug ?? '',
-        team_slug: payload.teamSlug ?? '',
-        parent_category_slug: payload.serviceSlug ?? '',
-        child_category_slug: payload.teamSlug ?? '',
-        parent_category_name: payload.serviceName ?? '',
-        child_category_name: payload.teamName ?? '',
-        renderUrl: payload.renderUrl,
-        createdAt: payload.createdAt ?? new Date().toISOString(),
+const sendVideoIngestRequest = async (
+  params: VideoIngestRequest
+): Promise<{ ok: boolean; statusCode?: number; message?: string }> => {
+  const { endpoint, uploadId, serviceSlug, teamSlug, videoUrl } = params;
+  const requestBody = {
+    service_slug: serviceSlug.trim(),
+    team_slug: teamSlug.trim(),
+    type: 'video' as const,
+    video_url: videoUrl.trim(),
+  };
+
+  const requiredFields = ['service_slug', 'team_slug', 'type', 'video_url'] as const;
+  for (const field of requiredFields) {
+    const value = requestBody[field];
+    if (typeof value !== 'string' || !value.trim()) {
+      return {
+        ok: false,
+        message: `Missing required field: ${field}`,
       };
+    }
+  }
+
+  if (requestBody.type !== 'video') {
+    return { ok: false, message: 'Invalid type. Only "video" is allowed.' };
+  }
+
+  if (!DIRECT_MP4_URL_REGEX.test(requestBody.video_url)) {
+    return {
+      ok: false,
+      message: 'video_url must be a direct MP4 link',
+    };
+  }
+
+  const sitePublishToken =
+    (import.meta.env.VITE_SITE_PUBLISH_TOKEN as string | undefined)?.trim() ||
+    (import.meta.env.VITE_LOCAL_SITE_PUBLISH_TOKEN as string | undefined)?.trim() ||
+    '';
+
+  if (!sitePublishToken) {
+    return {
+      ok: false,
+      message:
+        'Missing bearer token. Set VITE_SITE_PUBLISH_TOKEN (or VITE_LOCAL_SITE_PUBLISH_TOKEN).',
+    };
+  }
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
+
+  headers.Authorization = `Bearer ${sitePublishToken}`;
 
   try {
-    if (isLocalBridge && !localSitePublishToken) {
-      console.warn(
-        '[n8nService] Local publish endpoint is configured, but VITE_LOCAL_SITE_PUBLISH_TOKEN is empty.'
-      );
-      writePublishAudit({
-        ts: new Date().toISOString(),
-        uploadId: payload.uploadId,
-        endpoint: publishUrl,
-        status: 'skipped',
-        reason: 'empty_local_site_publish_token',
-        request: requestBody as Record<string, unknown>,
-      });
-      return false;
-    }
-
-    if (isLocalBridge) {
-      const localPayload = requestBody as Record<string, unknown>;
-      const requiredFields = ['service_slug', 'team_slug', 'type', 'video_url'] as const;
-
-      for (const field of requiredFields) {
-        const value = localPayload[field];
-        if (typeof value !== 'string' || !value.trim()) {
-          const reason = `missing_required_field:${field}`;
-          console.warn(`[n8nService] Local publish skipped: ${reason}`);
-          writePublishAudit({
-            ts: new Date().toISOString(),
-            uploadId: payload.uploadId,
-            endpoint: publishUrl,
-            status: 'skipped',
-            reason,
-            request: requestBody as Record<string, unknown>,
-          });
-          return false;
-        }
-      }
-
-      if (localPayload.type !== 'video') {
-        const reason = 'invalid_type_for_local_bridge';
-        console.warn(`[n8nService] Local publish skipped: ${reason}`);
-        writePublishAudit({
-          ts: new Date().toISOString(),
-          uploadId: payload.uploadId,
-          endpoint: publishUrl,
-          status: 'skipped',
-          reason,
-          request: requestBody as Record<string, unknown>,
-        });
-        return false;
-      }
-    }
-
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    };
-
-    if (isLocalBridge) {
-      headers.Authorization = `Bearer ${localSitePublishToken}`;
-    } else if (config.api.n8nApiKey) {
-      headers['X-N8N-API-KEY'] = config.api.n8nApiKey;
-    }
-
-    const response = await fetch(publishUrl, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(requestBody),
     });
 
     const responseText = await response.text().catch(() => '');
-    let responsePreview = responseText;
-    try {
-      responsePreview = responseText ? JSON.stringify(JSON.parse(responseText)) : '';
-    } catch {
-      // keep raw text
-    }
-
-    if (!response.ok) {
-      console.warn(
-        `[n8nService] Publish webhook returned ${response.status} ${response.statusText}`
-      );
-      writePublishAudit({
-        ts: new Date().toISOString(),
-        uploadId: payload.uploadId,
-        endpoint: publishUrl,
-        status: 'failed',
-        httpCode: response.status,
-        reason: `http_${response.status}`,
-        request: requestBody as Record<string, unknown>,
-        responsePreview: responsePreview.slice(0, 1000),
-      });
-      return false;
-    }
-
     writePublishAudit({
       ts: new Date().toISOString(),
-      uploadId: payload.uploadId,
-      endpoint: publishUrl,
-      status: 'sent',
+      uploadId,
+      endpoint,
+      status: response.ok ? 'sent' : 'failed',
       httpCode: response.status,
+      reason: response.ok ? undefined : `http_${response.status}`,
       request: requestBody as Record<string, unknown>,
-      responsePreview: responsePreview.slice(0, 1000),
+      responsePreview: responseText.slice(0, 1000),
     });
 
+    if (!response.ok) {
+      return {
+        ok: false,
+        statusCode: response.status,
+        message: responseText || response.statusText,
+      };
+    }
+
     const curlHint = [
-      `curl.exe -X POST "${publishUrl}"`,
+      `curl.exe -X POST "${endpoint}"`,
+      `-H "Authorization: Bearer <INGEST_TOKEN>"`,
       `-H "Accept: application/json"`,
       `-H "Content-Type: application/json"`,
-      isLocalBridge && localSitePublishToken
-        ? `-H "Authorization: Bearer <TOKEN>"`
-        : config.api.n8nApiKey
-        ? `-H "X-N8N-API-KEY: <KEY>"`
-        : '',
       `--data-raw '${JSON.stringify(requestBody)}'`,
-    ]
-      .filter(Boolean)
-      .join(' ');
-    console.info('[n8nService] Publish request sent. cURL:', curlHint);
+    ].join(' ');
+    console.info('[n8nService] Video ingest request sent. cURL:', curlHint);
 
-    return true;
+    return { ok: true, statusCode: response.status };
   } catch (err) {
-    console.warn('[n8nService] Publish webhook error:', err);
     writePublishAudit({
       ts: new Date().toISOString(),
-      uploadId: payload.uploadId,
-      endpoint: publishUrl,
+      uploadId,
+      endpoint,
       status: 'failed',
       reason: err instanceof Error ? err.message : 'unknown_error',
       request: requestBody as Record<string, unknown>,
     });
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+};
+
+export const triggerVideoPublishedWebhook = async (
+  payload: N8nPublishPayload
+): Promise<boolean> => {
+  if (!payload.uploadId || !payload.renderUrl || !payload.serviceSlug || !payload.teamSlug) {
     return false;
   }
+
+  const publishUrl =
+    (import.meta.env.VITE_SITE_PUBLISH_WEBHOOK_URL as string | undefined)?.trim() ||
+    (import.meta.env.VITE_LOCAL_SITE_PUBLISH_URL as string | undefined)?.trim() ||
+    (import.meta.env.VITE_N8N_PUBLISH_WEBHOOK_URL as string | undefined) ||
+    DEFAULT_PUBLISH_WEBHOOK_URL;
+
+  const result = await sendVideoIngestRequest({
+    endpoint: publishUrl,
+    uploadId: payload.uploadId,
+    serviceSlug: payload.serviceSlug,
+    teamSlug: payload.teamSlug,
+    videoUrl: payload.renderUrl,
+  });
+
+  if (!result.ok) {
+    console.warn('[n8nService] Publish webhook error:', result.message);
+  }
+
+  return result.ok;
 };
 
 /**
@@ -639,69 +603,18 @@ export const triggerSitePublishWebhook = async (
       message: 'Missing required fields: renderUrl/serviceSlug/teamSlug',
     };
   }
-
-  const requestBody = {
-    type: 'video',
+  const result = await sendVideoIngestRequest({
+    endpoint: webhookUrl,
     uploadId: payload.uploadId,
-    video_url: payload.renderUrl,
-    renderUrl: payload.renderUrl,
-    service_slug: payload.serviceSlug,
-    team_slug: payload.teamSlug,
-    parent_category_slug: payload.serviceSlug,
-    child_category_slug: payload.teamSlug,
-    parent_category_name: payload.serviceName ?? '',
-    child_category_name: payload.teamName ?? '',
-    userEmail: payload.userEmail ?? '',
-    createdAt: new Date().toISOString(),
+    serviceSlug: payload.serviceSlug,
+    teamSlug: payload.teamSlug,
+    videoUrl: payload.renderUrl,
+  });
+
+  return {
+    success: result.ok,
+    statusCode: result.statusCode,
+    message: result.message,
   };
-
-  try {
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(config.api.n8nApiKey && {
-          'X-N8N-API-KEY': config.api.n8nApiKey,
-        }),
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    const responseText = await response.text().catch(() => '');
-    writePublishAudit({
-      ts: new Date().toISOString(),
-      uploadId: payload.uploadId,
-      endpoint: webhookUrl,
-      status: response.ok ? 'sent' : 'failed',
-      httpCode: response.status,
-      reason: response.ok ? undefined : `http_${response.status}`,
-      request: requestBody as Record<string, unknown>,
-      responsePreview: responseText.slice(0, 1000),
-    });
-
-    if (!response.ok) {
-      return {
-        success: false,
-        statusCode: response.status,
-        message: responseText || response.statusText,
-      };
-    }
-
-    return { success: true, statusCode: response.status };
-  } catch (err) {
-    writePublishAudit({
-      ts: new Date().toISOString(),
-      uploadId: payload.uploadId,
-      endpoint: webhookUrl,
-      status: 'failed',
-      reason: err instanceof Error ? err.message : 'unknown_error',
-      request: requestBody as Record<string, unknown>,
-    });
-    return {
-      success: false,
-      message: err instanceof Error ? err.message : 'Unknown error',
-    };
-  }
 };
 
