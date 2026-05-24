@@ -69,6 +69,8 @@ export interface N8nPublishPayload {
   serviceName?: string;
   teamName?: string;
   renderUrl: string;
+  posterUrl?: string;
+  thumbnailUrl?: string;
   createdAt?: string;
 }
 
@@ -77,6 +79,8 @@ export interface SitePublishWebhookPayload {
   renderUrl: string;
   serviceSlug: string;
   teamSlug: string;
+  posterUrl?: string;
+  thumbnailUrl?: string;
   serviceName?: string;
   teamName?: string;
   userEmail?: string;
@@ -450,17 +454,21 @@ interface VideoIngestRequest {
   serviceSlug: string;
   teamSlug: string;
   videoUrl: string;
+  posterUrl?: string;
+  thumbnailUrl?: string;
 }
 
 const sendVideoIngestRequest = async (
   params: VideoIngestRequest
 ): Promise<{ ok: boolean; statusCode?: number; message?: string }> => {
-  const { endpoint, uploadId, serviceSlug, teamSlug, videoUrl } = params;
+  const { endpoint, uploadId, serviceSlug, teamSlug, videoUrl, posterUrl, thumbnailUrl } = params;
   const requestBody = {
     service_slug: serviceSlug.trim(),
     team_slug: teamSlug.trim(),
     type: 'video' as const,
     video_url: videoUrl.trim(),
+    ...(posterUrl?.trim() ? { poster_url: posterUrl.trim() } : {}),
+    ...(thumbnailUrl?.trim() ? { thumbnail_url: thumbnailUrl.trim() } : {}),
   };
 
   const requiredFields = ['service_slug', 'team_slug', 'type', 'video_url'] as const;
@@ -577,6 +585,8 @@ export const triggerVideoPublishedWebhook = async (
     serviceSlug: payload.serviceSlug,
     teamSlug: payload.teamSlug,
     videoUrl: payload.renderUrl,
+    posterUrl: payload.posterUrl,
+    thumbnailUrl: payload.thumbnailUrl || payload.posterUrl,
   });
 
   if (!result.ok) {
@@ -609,6 +619,8 @@ export const triggerSitePublishWebhook = async (
     serviceSlug: payload.serviceSlug,
     teamSlug: payload.teamSlug,
     videoUrl: payload.renderUrl,
+    posterUrl: payload.posterUrl,
+    thumbnailUrl: payload.thumbnailUrl || payload.posterUrl,
   });
 
   return {
