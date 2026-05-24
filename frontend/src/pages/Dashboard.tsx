@@ -72,7 +72,6 @@ export const Dashboard: React.FC = () => {
         const result = await getRenderResult(upload.id, upload.targetName, uploadDate);
         if (result.renderUrl) {
           await uploadService.setRenderResult(upload.id, result.renderUrl);
-          const posterUrl = upload.uploadedPhotos?.[0]?.secureUrl || upload.uploadedPhotos?.[0]?.url;
 
           const publishOk = await triggerVideoPublishedWebhook({
             uploadId: upload.id,
@@ -83,8 +82,6 @@ export const Dashboard: React.FC = () => {
             serviceName: upload.serviceName,
             teamName: upload.teamName,
             renderUrl: result.renderUrl,
-            posterUrl,
-            thumbnailUrl: posterUrl,
             createdAt: new Date().toISOString(),
           });
           if (publishOk) {
@@ -104,7 +101,6 @@ export const Dashboard: React.FC = () => {
 
     for (const upload of withRenderNoWebhook) {
       try {
-        const posterUrl = upload.uploadedPhotos?.[0]?.secureUrl || upload.uploadedPhotos?.[0]?.url;
         const publishOk = await triggerVideoPublishedWebhook({
           uploadId: upload.id,
           userName: upload.targetName,
@@ -114,8 +110,6 @@ export const Dashboard: React.FC = () => {
           serviceName: upload.serviceName,
           teamName: upload.teamName,
           renderUrl: upload.renderUrl!,
-          posterUrl,
-          thumbnailUrl: posterUrl,
           createdAt: upload.updatedAt,
         });
         if (publishOk) {

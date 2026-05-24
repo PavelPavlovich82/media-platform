@@ -112,18 +112,12 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
       const parsedUser = userRaw ? JSON.parse(userRaw) : null;
       const userEmail =
         parsedUser && typeof parsedUser.email === 'string' ? parsedUser.email : '';
-      const posterUrl =
-        upload.uploadedPhotos?.[0]?.secureUrl ||
-        upload.uploadedPhotos?.[0]?.url ||
-        (upload.contentType === 'photo' ? upload.cloudinarySecureUrl || upload.cloudinaryUrl : undefined);
 
       const result = await triggerSitePublishWebhook({
         uploadId: upload.id,
         renderUrl: upload.renderUrl,
         serviceSlug: upload.serviceSlug,
         teamSlug: upload.teamSlug,
-        posterUrl,
-        thumbnailUrl: posterUrl,
         serviceName: upload.serviceName || resolveServiceName(upload.serviceSlug),
         teamName: upload.teamName || resolveTeamName(upload.serviceSlug, upload.teamSlug),
         userEmail,
@@ -408,3 +402,4 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
     </div>
   );
 };
+

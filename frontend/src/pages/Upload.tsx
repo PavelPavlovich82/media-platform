@@ -501,8 +501,6 @@ export const Upload: React.FC = () => {
               serviceName: safeServiceName,
               teamName: safeTeamName,
               renderUrl: withUrl.renderUrl,
-              posterUrl: normalizedPhotos[0]?.url,
-              thumbnailUrl: normalizedPhotos[0]?.url,
               createdAt: new Date().toISOString(),
             });
 
