@@ -126,9 +126,7 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
         publishedAt: new Date().toISOString(),
       };
 
-      window.setTimeout(() => {
-        void triggerAfterSitePublishAutomationWebhook(automationPayload);
-      }, 60000);
+      void triggerAfterSitePublishAutomationWebhook(automationPayload);
 
       const result = await triggerSitePublishWebhook({
         uploadId: upload.id,
