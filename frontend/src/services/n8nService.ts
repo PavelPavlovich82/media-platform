@@ -23,6 +23,8 @@ const DEFAULT_PUBLISH_WEBHOOK_URL =
   'https://pavelbb1982.app.n8n.cloud/webhook/be71a706-bb67-41ac-b3e2-0804c2e3957b';
 const DEFAULT_SITE_PUBLISH_WEBHOOK_URL =
   'https://pavelbb1982.app.n8n.cloud/webhook/9606edf8-bf82-4475-9624-5c67bc80c284';
+const DEFAULT_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL =
+  'https://pavelbb1982.app.n8n.cloud/webhook/49662ca4-5d73-419d-9d50-c36f363eb467';
 const PUBLISH_AUDIT_STORAGE_KEY = 'publish_dispatch_audit';
 const PUBLISH_AUDIT_MAX_ITEMS = 100;
 
@@ -80,6 +82,10 @@ export interface SitePublishWebhookPayload {
   serviceName?: string;
   teamName?: string;
   userEmail?: string;
+}
+
+export interface AfterSitePublishAutomationPayload extends SitePublishWebhookPayload {
+  publishedAt?: string;
 }
 
 interface N8nResponse {
@@ -616,5 +622,51 @@ export const triggerSitePublishWebhook = async (
     statusCode: result.statusCode,
     message: result.message,
   };
+};
+
+export const triggerAfterSitePublishAutomationWebhook = async (
+  payload: AfterSitePublishAutomationPayload
+): Promise<{ success: boolean; statusCode?: number; message?: string }> => {
+  const webhookUrl =
+    (import.meta.env.VITE_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL as string | undefined)?.trim() ||
+    (import.meta.env.VITE_N8N_RESULT_WEBHOOK_URL as string | undefined)?.trim() ||
+    DEFAULT_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL;
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        event: 'site_publish_clicked',
+        uploadId: payload.uploadId,
+        renderUrl: payload.renderUrl,
+        serviceSlug: payload.serviceSlug,
+        teamSlug: payload.teamSlug,
+        serviceName: payload.serviceName,
+        teamName: payload.teamName,
+        userEmail: payload.userEmail,
+        publishedAt: payload.publishedAt,
+      }),
+    });
+
+    const responseText = await response.text().catch(() => '');
+    if (!response.ok) {
+      return {
+        success: false,
+        statusCode: response.status,
+        message: responseText || response.statusText,
+      };
+    }
+
+    return { success: true, statusCode: response.status };
+  } catch (err) {
+    return {
+      success: false,
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
 };
 

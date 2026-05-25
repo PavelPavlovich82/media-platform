@@ -15,10 +15,7 @@ import {
   formatDuration,
 } from '../services/voiceService';
 import { uploadService } from '../services/uploadService';
-import {
-  triggerN8nWorkflow,
-  triggerVideoPublishedWebhook,
-} from '../services/n8nService';
+import { triggerN8nWorkflow } from '../services/n8nService';
 import { config } from '../config/env';
 import { useAuth } from '../contexts/AuthContext';
 import { WP_SERVICE_CATEGORIES } from '../constants/wpCategories';
@@ -491,22 +488,6 @@ export const Upload: React.FC = () => {
               withUrl.renderUrl,
               withUrl.renderStatus ?? 'rendering'
             );
-
-            const publishOk = await triggerVideoPublishedWebhook({
-              uploadId: sessionId,
-              userName: safeTargetName,
-              userEmail: user?.email || '',
-              serviceSlug: safeServiceSlug,
-              teamSlug: safeTeamSlug,
-              serviceName: safeServiceName,
-              teamName: safeTeamName,
-              renderUrl: withUrl.renderUrl,
-              createdAt: new Date().toISOString(),
-            });
-
-            if (publishOk) {
-              await uploadService.markPublishWebhookTriggered(sessionId);
-            }
           }
         })
         .catch((err) => console.error('[Upload] n8n background error:', err));

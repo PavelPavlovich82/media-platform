@@ -11,7 +11,10 @@ import {
   getUploadStatusLabel,
   getUploadStatusColor,
 } from '../../services/uploadService';
-import { triggerSitePublishWebhook } from '../../services/n8nService';
+import {
+  triggerAfterSitePublishAutomationWebhook,
+  triggerSitePublishWebhook,
+} from '../../services/n8nService';
 import { WP_SERVICE_CATEGORIES } from '../../constants/wpCategories';
 
 interface UploadCardProps {
@@ -125,6 +128,20 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
 
       if (result.success) {
         setSitePublishNote('Отправлено в webhook сайта.');
+        const automationPayload = {
+          uploadId: upload.id,
+          renderUrl: upload.renderUrl,
+          serviceSlug: upload.serviceSlug,
+          teamSlug: upload.teamSlug,
+          serviceName: upload.serviceName || resolveServiceName(upload.serviceSlug),
+          teamName: upload.teamName || resolveTeamName(upload.serviceSlug, upload.teamSlug),
+          userEmail,
+          publishedAt: new Date().toISOString(),
+        };
+
+        window.setTimeout(() => {
+          void triggerAfterSitePublishAutomationWebhook(automationPayload);
+        }, 60000);
       } else {
         setSitePublishNote(
           `Ошибка отправки${result.statusCode ? ` (${result.statusCode})` : ''}: ${result.message || 'unknown'}`
