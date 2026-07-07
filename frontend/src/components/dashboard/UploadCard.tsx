@@ -11,11 +11,7 @@ import {
   getUploadStatusLabel,
   getUploadStatusColor,
 } from '../../services/uploadService';
-import {
-  triggerAfterSitePublishAutomationWebhook,
-  triggerSitePublishWebhook,
-} from '../../services/n8nService';
-import { WP_SERVICE_CATEGORIES } from '../../constants/wpCategories';
+import { pushVideoToAllAllSite } from '../../services/n8nService';
 
 interface UploadCardProps {
   upload: Upload;
@@ -41,6 +37,12 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
   const [videoReady, setVideoReady] = useState(upload.renderStatus === 'ready');
   const [sitePublishing, setSitePublishing] = useState(false);
   const [sitePublishNote, setSitePublishNote] = useState<string | null>(null);
+
+  const publishedStorageKey = `all_all_site_published:${upload.id}`;
+  const [publishedRenderUrl, setPublishedRenderUrl] = useState<string | null>(() =>
+    localStorage.getItem(publishedStorageKey)
+  );
+  const alreadyPublished = !!upload.renderUrl && publishedRenderUrl === upload.renderUrl;
 
   // Poll every 60 sec until the file is accessible at renderUrl
   const probe = useCallback(async () => {
@@ -84,70 +86,38 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
     }
   };
 
-  const resolveServiceName = (slug?: string): string =>
-    slug ? WP_SERVICE_CATEGORIES.find((s) => s.slug === slug)?.label || '' : '';
-
-  const resolveTeamName = (serviceSlug?: string, teamSlug?: string): string => {
-    if (!teamSlug) return '';
-    const byService =
-      WP_SERVICE_CATEGORIES.find((s) => s.slug === serviceSlug)?.teams.find(
-        (t) => t.slug === teamSlug
-      )?.label || '';
-    if (byService) return byService;
-    for (const service of WP_SERVICE_CATEGORIES) {
-      const team = service.teams.find((t) => t.slug === teamSlug);
-      if (team) return team.label;
-    }
-    return '';
-  };
-
   const handlePublishToSite = async () => {
-    if (!upload.renderUrl || sitePublishing) return;
+    if (!upload.renderUrl || sitePublishing || alreadyPublished) return;
     if (!upload.serviceSlug || !upload.teamSlug) {
-      setSitePublishNote('Не выбраны дисциплина/бригада для отправки.');
+      setSitePublishNote('Не выбраны дисциплина/бригада для публикации.');
       return;
     }
 
     setSitePublishing(true);
     setSitePublishNote(null);
     try {
-      const userRaw = localStorage.getItem('user');
-      const parsedUser = userRaw ? JSON.parse(userRaw) : null;
-      const userEmail =
-        parsedUser && typeof parsedUser.email === 'string' ? parsedUser.email : '';
-      const automationPayload = {
+      const result = await pushVideoToAllAllSite({
         uploadId: upload.id,
         renderUrl: upload.renderUrl,
         serviceSlug: upload.serviceSlug,
         teamSlug: upload.teamSlug,
-        serviceName: upload.serviceName || resolveServiceName(upload.serviceSlug),
-        teamName: upload.teamName || resolveTeamName(upload.serviceSlug, upload.teamSlug),
-        userEmail,
-        publishedAt: new Date().toISOString(),
-      };
-
-      void triggerAfterSitePublishAutomationWebhook(automationPayload);
-
-      const result = await triggerSitePublishWebhook({
-        uploadId: upload.id,
-        renderUrl: upload.renderUrl,
-        serviceSlug: upload.serviceSlug,
-        teamSlug: upload.teamSlug,
-        serviceName: upload.serviceName || resolveServiceName(upload.serviceSlug),
-        teamName: upload.teamName || resolveTeamName(upload.serviceSlug, upload.teamSlug),
-        userEmail,
+        serviceName: upload.serviceName,
+        teamName: upload.teamName,
+        resultData: upload.renderResultData,
       });
 
-      if (result.success) {
-        setSitePublishNote('Отправлено в webhook сайта.');
-      } else {
-        setSitePublishNote(
-          `Ошибка отправки${result.statusCode ? ` (${result.statusCode})` : ''}: ${result.message || 'unknown'}`
-        );
+      if (!result.success) {
+        const status = result.statusCode ? ` (${result.statusCode})` : '';
+        setSitePublishNote(`Ошибка публикации${status}: ${result.message || 'unknown'}`);
+        return;
       }
+
+      localStorage.setItem(publishedStorageKey, upload.renderUrl);
+      setPublishedRenderUrl(upload.renderUrl);
+      setSitePublishNote('Опубликовано на all-all.ru.');
     } catch (err) {
       setSitePublishNote(
-        `Ошибка отправки: ${err instanceof Error ? err.message : 'unknown'}`
+        `Ошибка публикации: ${err instanceof Error ? err.message : 'unknown'}`
       );
     } finally {
       setSitePublishing(false);
@@ -207,6 +177,9 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
             <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${getUploadStatusColor(upload.status)}`}>
               {getUploadStatusLabel(upload.status)}
             </span>
+          )}
+          {upload.lastError && (
+            <p className="mt-2 text-xs text-red-600">{upload.lastError}</p>
           )}
         </div>
 
@@ -312,11 +285,15 @@ export const UploadCard: React.FC<UploadCardProps> = ({ upload, onDelete, onRend
                 </button>
                 <button
                   onClick={handlePublishToSite}
-                  disabled={sitePublishing || !upload.renderUrl}
+                  disabled={sitePublishing || !upload.renderUrl || alreadyPublished}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Отправить в webhook публикации сайта"
+                  title="Отправить видео на all-all.ru"
                 >
-                  {sitePublishing ? 'Отправка...' : 'Опубликовать на сайте'}
+                  {sitePublishing
+                    ? 'Отправка...'
+                    : alreadyPublished
+                      ? 'Опубликовано на сайте'
+                      : 'Опубликовать на сайте'}
                 </button>
                 <button
                   disabled

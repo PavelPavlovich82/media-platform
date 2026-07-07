@@ -9,7 +9,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { uploadService } from '../services/uploadService';
-import { getRenderResult } from '../services/n8nService';
+import {
+  getRenderResult,
+  triggerContentPrepWebhook,
+} from '../services/n8nService';
 import { UploadCard } from '../components/dashboard/UploadCard';
 import type { Upload } from '../types';
 
@@ -33,11 +36,11 @@ export const Dashboard: React.FC = () => {
     }
   }, [filter]);
 
-  // Poll n8n for render results — with 6-min start delay and max 10 checks
+  // Poll n8n for render results — 10-min delay, then every 60 sec for up to 8 min
   const pollN8nResults = useCallback(async (currentUploads: Upload[]) => {
     const STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min → auto-fail
-    const MIN_DELAY_MS = 6 * 60 * 1000; // wait 6 min after first POST trigger
-    const MAX_POLL_ATTEMPTS = 10;
+    const MIN_DELAY_MS = 10 * 60 * 1000; // wait 10 min after webhook2 trigger
+    const MAX_POLL_ATTEMPTS = 8; // 8 attempts × 60 sec = 8 min polling window
     const now = Date.now();
 
     const processing = currentUploads.filter(
@@ -55,11 +58,10 @@ export const Dashboard: React.FC = () => {
         continue;
       }
 
-      // Wait at least 3 minutes before first poll — n8n + Creatomate need time
       if (age < MIN_DELAY_MS) continue;
 
       if (attempts >= MAX_POLL_ATTEMPTS) {
-        await uploadService.markFailed(upload.id, '����� �� �������: ���������� 10 �������� webhook');
+        await uploadService.markFailed(upload.id, 'Нет ответа от webhook после 8 минут опроса');
         continue;
       }
 
@@ -68,14 +70,56 @@ export const Dashboard: React.FC = () => {
         const uploadDate = upload.createdAt.split('T')[0];
         const result = await getRenderResult(upload.id, upload.targetName, uploadDate);
         if (result.renderUrl) {
-          await uploadService.setRenderResult(upload.id, result.renderUrl);
+          await uploadService.setRenderResult(
+            upload.id,
+            result.renderUrl,
+            'rendering',
+            result.resultData
+          );
+
+          if (upload.publishWebhookTriggeredAt) {
+            await loadUploads();
+            continue;
+          }
+
+          if (!upload.serviceSlug || !upload.teamSlug) {
+            console.warn(
+              '[Dashboard] Render ready but slugs missing; skip 9606 content prep webhook',
+              upload.id
+            );
+            await loadUploads();
+            continue;
+          }
+
+          const prepPayload = {
+            uploadId: upload.id,
+            renderUrl: result.renderUrl,
+            serviceSlug: upload.serviceSlug,
+            teamSlug: upload.teamSlug,
+            serviceName: upload.serviceName,
+            teamName: upload.teamName,
+            userEmail: user?.email || '',
+            resultData: result.resultData,
+          };
+          const prepResult = await triggerContentPrepWebhook(prepPayload);
+
+          if (prepResult.success) {
+            await uploadService.markPublishWebhookTriggered(upload.id);
+          } else {
+            const status = prepResult.statusCode ? ` (${prepResult.statusCode})` : '';
+            console.warn(
+              `[Dashboard] Content prep webhook failed${status}:`,
+              prepResult.message || 'unknown'
+            );
+          }
+
           await loadUploads();
         }
       } catch {
         // silent
       }
     }
-  }, [loadUploads]);
+  }, [loadUploads, user?.email]);
 
   useEffect(() => {
     loadUploads();
@@ -83,11 +127,11 @@ export const Dashboard: React.FC = () => {
     // UI refresh every 15 sec
     const uiInterval = setInterval(loadUploads, 15000);
 
-    // n8n poll every 30 sec (6-min delay + max 10 checks enforced inside pollN8nResults)
+    // n8n poll every 60 sec (10-min delay + max 8 checks enforced inside pollN8nResults)
     const pollInterval = setInterval(async () => {
       const result = await uploadService.getUserUploads();
       await pollN8nResults(result.data);
-    }, 30000);
+    }, 60000);
 
     return () => {
       clearInterval(uiInterval);

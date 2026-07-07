@@ -94,10 +94,11 @@ export interface Upload {
   // n8n / Creatomate result
   renderUrl?: string;                        // Creatomate download URL
   renderStatus?: 'rendering' | 'ready';      // whether file is ready to play
+  renderResultData?: Record<string, unknown>; // full JSON received from n8n result webhook
   triggeredN8n?: boolean;                    // whether n8n was triggered for this batch
   n8nTriggeredAt?: string;                   // timestamp of first n8n POST trigger
   n8nPollAttempts?: number;                  // how many GET polls were already done
-  publishWebhookTriggeredAt?: string;        // timestamp of POST to "video arrived on site" webhook
+  publishWebhookTriggeredAt?: string;        // timestamp of POST to 9606 content-prep webhook
   targetName?: string;                       // target person name sent to n8n (for polling)
   serviceSlug?: string;                      // parent WordPress category slug (service_slug)
   teamSlug?: string;                         // child WordPress category slug (team_slug)
