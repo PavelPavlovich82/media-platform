@@ -46,3 +46,21 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Cursor local state
+.cursor/
+
+# Local / service folders and secrets (added after factory deploy audit)
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+credentials/
+request_logs/
+database/
+tmp/
