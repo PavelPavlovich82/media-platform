@@ -24,7 +24,9 @@ const DEFAULT_PUBLISH_WEBHOOK_URL =
 const DEFAULT_SITE_PUBLISH_WEBHOOK_URL =
   'https://pavelbb1982.app.n8n.cloud/webhook/9606edf8-bf82-4475-9624-5c67bc80c284';
 const DEFAULT_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL =
-  'https://pavelbb1982.app.n8n.cloud/webhook/49662ca4-5d73-419d-9d50-c36f363eb467';
+  'https://pavelbb1982.app.n8n.cloud/webhook/be71a706-bb67-41ac-b3e2-0804c2e3957b';
+const DEFAULT_WORDPRESS_VIDEO_PUSH_URL =
+  'https://all-all.ru/wp-json/allall-media-bridge/v1/push-video';
 const PUBLISH_AUDIT_STORAGE_KEY = 'publish_dispatch_audit';
 const PUBLISH_AUDIT_MAX_ITEMS = 100;
 
@@ -59,6 +61,7 @@ export interface N8nTriggerResult {
 export interface N8nRenderResult {
   uploadId: string;
   renderUrl?: string;
+  resultData?: Record<string, unknown>;
   status: 'processing' | 'awaiting_decision' | 'failed';
 }
 
@@ -82,6 +85,7 @@ export interface SitePublishWebhookPayload {
   serviceName?: string;
   teamName?: string;
   userEmail?: string;
+  resultData?: Record<string, unknown>;
 }
 
 export interface AfterSitePublishAutomationPayload extends SitePublishWebhookPayload {
@@ -420,7 +424,7 @@ export const getRenderResult = async (
     const text = await response.text();
     if (!text.trim()) return { uploadId, status: 'processing' };
 
-    let data: { found?: boolean; url?: string; status?: string };
+    let data: Record<string, unknown>;
     try {
       data = JSON.parse(text);
     } catch {
@@ -428,9 +432,9 @@ export const getRenderResult = async (
     }
 
     // Accept both {found: true, url} and {url} (n8n returns row data directly)
-    const url = data.url;
+    const url = typeof data.url === 'string' ? data.url : undefined;
     if (url && url.startsWith('http')) {
-      return { uploadId, renderUrl: url, status: 'awaiting_decision' };
+      return { uploadId, renderUrl: url, resultData: data, status: 'awaiting_decision' };
     }
 
     return { uploadId, status: 'processing' };
@@ -593,13 +597,14 @@ export const triggerVideoPublishedWebhook = async (
 };
 
 /**
- * Manual publish action from UI button:
- * sends render URL + selected categories to dedicated n8n webhook.
+ * Step 2 in chain: after poll webhook (496) finds render URL,
+ * notify n8n content-prep workflow (9606). be71 is triggered by n8n itself.
  */
-export const triggerSitePublishWebhook = async (
+export const triggerContentPrepWebhook = async (
   payload: SitePublishWebhookPayload
 ): Promise<{ success: boolean; statusCode?: number; message?: string }> => {
   const webhookUrl =
+    (import.meta.env.VITE_CONTENT_PREP_WEBHOOK_URL as string | undefined)?.trim() ||
     (import.meta.env.VITE_SITE_PUBLISH_WEBHOOK_URL as string | undefined)?.trim() ||
     DEFAULT_SITE_PUBLISH_WEBHOOK_URL;
 
@@ -609,29 +614,147 @@ export const triggerSitePublishWebhook = async (
       message: 'Missing required fields: renderUrl/serviceSlug/teamSlug',
     };
   }
-  const result = await sendVideoIngestRequest({
-    endpoint: webhookUrl,
+
+  const requestBody = {
+    event: 'render_ready',
     uploadId: payload.uploadId,
+    renderUrl: payload.renderUrl,
     serviceSlug: payload.serviceSlug,
     teamSlug: payload.teamSlug,
-    videoUrl: payload.renderUrl,
-  });
-
-  return {
-    success: result.ok,
-    statusCode: result.statusCode,
-    message: result.message,
+    serviceName: payload.serviceName,
+    teamName: payload.teamName,
+    userEmail: payload.userEmail,
+    ...(payload.resultData || {}),
+    video_url: payload.renderUrl.trim(),
+    service_slug: payload.serviceSlug.trim(),
+    team_slug: payload.teamSlug.trim(),
+    type: 'video' as const,
   };
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const responseText = await response.text().catch(() => '');
+    writePublishAudit({
+      ts: new Date().toISOString(),
+      uploadId: payload.uploadId,
+      endpoint: webhookUrl,
+      status: response.ok ? 'sent' : 'failed',
+      httpCode: response.status,
+      reason: response.ok ? undefined : `http_${response.status}`,
+      request: requestBody as Record<string, unknown>,
+      responsePreview: responseText.slice(0, 1000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        statusCode: response.status,
+        message: responseText || response.statusText,
+      };
+    }
+
+    return { success: true, statusCode: response.status };
+  } catch (err) {
+    writePublishAudit({
+      ts: new Date().toISOString(),
+      uploadId: payload.uploadId,
+      endpoint: webhookUrl,
+      status: 'failed',
+      reason: err instanceof Error ? err.message : 'unknown_error',
+      request: requestBody as Record<string, unknown>,
+    });
+    return {
+      success: false,
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
 };
 
-export const triggerAfterSitePublishAutomationWebhook = async (
+/** @deprecated Use triggerContentPrepWebhook */
+export const triggerSitePublishWebhook = triggerContentPrepWebhook;
+
+export const pushVideoToAllAllSite = async (
+  payload: SitePublishWebhookPayload
+): Promise<{ success: boolean; statusCode?: number; message?: string }> => {
+  // Manual "Publish to site" button only. be71 is triggered by n8n after 9606 completes.
+  const endpoint =
+    (import.meta.env.VITE_WORDPRESS_VIDEO_PUSH_URL as string | undefined)?.trim() ||
+    DEFAULT_WORDPRESS_VIDEO_PUSH_URL;
+
+  if (!payload.renderUrl || !payload.serviceSlug || !payload.teamSlug) {
+    return {
+      success: false,
+      message: 'Missing required fields: renderUrl/serviceSlug/teamSlug',
+    };
+  }
+
+  const requestBody = {
+    ...(payload.resultData || {}),
+    service_slug: payload.serviceSlug.trim(),
+    team_slug: payload.teamSlug.trim(),
+    type: 'video' as const,
+    video_url: payload.renderUrl.trim(),
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const responseText = await response.text().catch(() => '');
+    writePublishAudit({
+      ts: new Date().toISOString(),
+      uploadId: payload.uploadId,
+      endpoint,
+      status: response.ok ? 'sent' : 'failed',
+      httpCode: response.status,
+      reason: response.ok ? undefined : `http_${response.status}`,
+      request: requestBody as Record<string, unknown>,
+      responsePreview: responseText.slice(0, 1000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        statusCode: response.status,
+        message: responseText || response.statusText,
+      };
+    }
+
+    return { success: true, statusCode: response.status };
+  } catch (err) {
+    writePublishAudit({
+      ts: new Date().toISOString(),
+      uploadId: payload.uploadId,
+      endpoint,
+      status: 'failed',
+      reason: err instanceof Error ? err.message : 'unknown_error',
+      request: requestBody as Record<string, unknown>,
+    });
+    return {
+      success: false,
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+};
+
+const sendSitePublishClickedWebhook = async (
+  webhookUrl: string,
   payload: AfterSitePublishAutomationPayload
 ): Promise<{ success: boolean; statusCode?: number; message?: string }> => {
-  const webhookUrl =
-    (import.meta.env.VITE_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL as string | undefined)?.trim() ||
-    (import.meta.env.VITE_N8N_RESULT_WEBHOOK_URL as string | undefined)?.trim() ||
-    DEFAULT_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL;
-
   try {
     const response = await fetch(webhookUrl, {
       method: 'POST',
@@ -668,5 +791,17 @@ export const triggerAfterSitePublishAutomationWebhook = async (
       message: err instanceof Error ? err.message : 'Unknown error',
     };
   }
+};
+
+export const triggerAfterSitePublishAutomationWebhook = async (
+  payload: AfterSitePublishAutomationPayload
+): Promise<{ success: boolean; statusCode?: number; message?: string }> => {
+  // Not used by frontend flow: be71 is called from n8n after 9606 Respond to Webhook.
+  const webhookUrl =
+    (import.meta.env.VITE_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL as string | undefined)?.trim() ||
+    (import.meta.env.VITE_N8N_RESULT_WEBHOOK_URL as string | undefined)?.trim() ||
+    DEFAULT_AFTER_SITE_PUBLISH_AUTOMATION_WEBHOOK_URL;
+
+  return sendSitePublishClickedWebhook(webhookUrl, payload);
 };
 

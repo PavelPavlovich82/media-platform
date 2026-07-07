@@ -12,6 +12,8 @@ import type {
   PaginatedResponse,
 } from '../types';
 
+import { generateId } from '../utils/id';
+
 const STORAGE_KEY = 'uploads';
 
 // ============================================================================
@@ -46,7 +48,7 @@ export const uploadService = {
     const user = userStr ? JSON.parse(userStr) : null;
 
     const upload: Upload = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       userId: user?.id || 'unknown',
       contentType: params.contentType,
       status: 'pending' as ProcessingStatus,
@@ -190,7 +192,8 @@ export const uploadService = {
   async setRenderResult(
     uploadId: string,
     renderUrl: string,
-    renderStatus: 'rendering' | 'ready' = 'rendering'
+    renderStatus: 'rendering' | 'ready' = 'rendering',
+    renderResultData?: Record<string, unknown>
   ): Promise<void> {
     const uploads = getUploads();
     const index = uploads.findIndex((u) => u.id === uploadId);
@@ -199,6 +202,7 @@ export const uploadService = {
       ...uploads[index],
       renderUrl,
       renderStatus,
+      renderResultData,
       status: 'awaiting_decision',
       updatedAt: new Date().toISOString(),
     };
@@ -257,7 +261,7 @@ export const uploadService = {
   },
 
   /**
-   * Mark that "video link arrived on site" webhook was sent.
+   * Mark that 9606 content-prep webhook was sent successfully.
    */
   async markPublishWebhookTriggered(uploadId: string): Promise<void> {
     const uploads = getUploads();

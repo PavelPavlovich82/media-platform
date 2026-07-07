@@ -7,8 +7,10 @@
  */
 
 import axios from 'axios';
+
 import { config } from '../config/env';
 import type { User, AuthResponse, LoginCredentials, RegisterCredentials } from '../types';
+import { generateId } from '../utils/id';
 
 // ============================================================================
 // Admin credentials (hardcoded, bypasses registration)
@@ -125,7 +127,7 @@ export const authService = {
 
     const passwordHash = await hashPassword(password);
     const newUser: StoredUser = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       email: email.toLowerCase(),
       passwordHash,
       createdAt: new Date().toISOString(),
